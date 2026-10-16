@@ -5,7 +5,8 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 
 // Shows the printable "Request for Use of Vehicle" form and can send it to another administrator.
-// The form itself is built by the backend (AllocationPrintController), so there is only one copy of it.
+// The values come from the backend (get_vehicle_request_print) and the page is built in
+// lib/printTemplates.js, so there is only one copy of the form.
 // Open when `allocation` is set. Administrators only.
 const props = defineProps({
   allocation: { type: Object, default: null },
@@ -32,7 +33,7 @@ const adminOptions = computed(() =>
   props.admins.map((admin) => ({ value: admin.id, label: `${admin.name} · ${admin.email}` })),
 )
 
-// The form comes back as HTML text, so an error comes back as text too. Read the message from it.
+// Reads the message from a failed request.
 function readError(error) {
   const body = error?.response?.data
 
@@ -90,7 +91,8 @@ async function send() {
     const share = unwrap(
       await api.post('/trip-request-shares', {
         allocation_id: props.allocation.id,
-        recipient_id: Number(recipientId.value),
+        // Accounts are identified by a UUID, so the id is sent as it is (not as a number).
+        recipient_id: recipientId.value,
       }),
     )
     message.value = `Trip request sent to ${share.recipient.name}.`

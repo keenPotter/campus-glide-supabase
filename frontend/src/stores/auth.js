@@ -1,49 +1,87 @@
 import { defineStore } from 'pinia'
-import api, { TOKEN_KEY, unwrap } from '@/lib/api'
+import { supabase } from '@/lib/supabase'
+import { httpError } from '@/lib/api'
+
+// The profile row (role, name, is_active) of an auth user.
+async function loadProfile(userId) {
+  const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle()
+  if (error) throw error
+  return data
+}
 
 export const useAuthStore = defineStore('auth', {
   state: () => ({
     user: null,
-    token: localStorage.getItem(TOKEN_KEY),
     ready: false,
   }),
 
   getters: {
-    isAuthenticated: (state) => Boolean(state.token && state.user),
+    isAuthenticated: (state) => Boolean(state.user),
     role: (state) => state.user?.role ?? null,
     isAdministrator: (state) => state.user?.role === 'administrator',
     isFaculty: (state) => state.user?.role === 'faculty',
   },
 
   actions: {
-    setToken(token) {
-      this.token = token
-      if (token) {
-        localStorage.setItem(TOKEN_KEY, token)
-      } else {
-        localStorage.removeItem(TOKEN_KEY)
-      }
-    },
+    // The session (tokens) is kept by supabase-js. The store keeps the profile.
+    async login({ email, password, role }) {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: String(email ?? '').trim(),
+        password,
+      })
 
-    async login(credentials) {
-      const { data } = await api.post('/login', credentials)
-      this.setToken(data.token)
-      this.user = data.user
+      if (error) {
+        if (error.code === 'invalid_credentials' || error.status === 400) {
+          const message = 'These credentials do not match our records.'
+          throw httpError(422, message, { email: [message] })
+        }
+        // Network or server problem: the login page shows its own message.
+        throw new Error(error.message)
+      }
+
+      let profile = null
+      try {
+        profile = await loadProfile(data.user.id)
+      } catch {
+        // handled below
+      }
+
+      if (!profile || !profile.is_active) {
+        await supabase.auth.signOut()
+        const message = 'This account is not active. Please contact an administrator.'
+        throw httpError(422, message, { email: [message] })
+      }
+
+      // The account type chosen on the login page must match the role of the account.
+      if (role && profile.role !== role) {
+        await supabase.auth.signOut()
+        const message = 'The selected account type does not match your account.'
+        throw httpError(422, message, { role: [message] })
+      }
+
+      this.user = profile
       this.ready = true
       return this.user
     },
 
     async fetchUser() {
-      if (!this.token) {
-        this.ready = true
-        return null
-      }
-
       try {
-        const response = await api.get('/user')
-        this.user = unwrap(response)
+        const { data } = await supabase.auth.getSession()
+
+        if (!data.session) {
+          this.user = null
+          return null
+        }
+
+        const profile = await loadProfile(data.session.user.id)
+
+        if (!profile || !profile.is_active) {
+          await supabase.auth.signOut()
+          this.user = null
+        } else {
+          this.user = profile
+        }
       } catch {
-        this.setToken(null)
         this.user = null
       } finally {
         this.ready = true
@@ -54,11 +92,10 @@ export const useAuthStore = defineStore('auth', {
 
     async logout() {
       try {
-        await api.post('/logout')
+        await supabase.auth.signOut()
       } catch {
-        // token may already be invalid — clear locally regardless
+        // the session may already be invalid: clear locally regardless
       }
-      this.setToken(null)
       this.user = null
     },
   },
