@@ -7,6 +7,18 @@ create or replace function pg_temp.uid(n int) returns uuid language sql as $$
     select ('00000000-0000-0000-0000-' || lpad(n::text, 12, '0'))::uuid
 $$;
 
+-- Running this seed on a database with data you want to keep will wipe it, so only use it on dev or demo projects.
+delete from auth.users
+where id in (select pg_temp.uid(n) from generate_series(1, 13) n);
+
+do $$
+declare r record;
+begin
+  for r in select tablename from pg_tables where schemaname = 'public' loop
+    execute format('truncate table public.%I restart identity cascade', r.tablename);
+  end loop;
+end $$;
+
 -- ---------------------------------------------------------------- users (auth + profile via trigger)
 insert into auth.users (
     instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
