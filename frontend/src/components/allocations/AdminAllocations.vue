@@ -8,6 +8,7 @@ import { canPrint, canReassign, passengerText, requestNumber, whenText } from '@
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
+import BaseSelect from '@/components/ui/BaseSelect.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import LoadError from '@/components/ui/LoadError.vue'
 import PaginationBar from '@/components/ui/PaginationBar.vue'
@@ -49,6 +50,8 @@ const PAGE_SIZE = 10
 
 const search = ref('')
 const typeFilter = ref('')
+const monthFilter = ref('') // '' = all months, '01' to '12'
+const yearFilter = ref('') // '' = all years, for example '2026'
 const page = ref(1)
 
 const modalOpen = ref(false)
@@ -94,12 +97,44 @@ const resolvableConflict = computed(() =>
 
 /* ================= SUMMARY ================= */
 
+const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
+
+const monthOptions = MONTHS.map((name, index) => ({
+  value: String(index + 1).padStart(2, '0'),
+  label: name,
+}))
+
+// Years that have a trip. The current year is always there.
+const yearOptions = computed(() => {
+  const years = new Set([String(new Date().getFullYear())])
+
+  summaryRows.value.forEach((row) => {
+    const year = String(row.date ?? '').slice(0, 4)
+    if (/^\d{4}$/.test(year)) years.add(year)
+  })
+
+  return [...years].sort((a, b) => b.localeCompare(a)).map((year) => ({ value: year, label: year }))
+})
+
+// Rows that match the Month and Year filters (the trip date is YYYY-MM-DD).
+const dateRows = computed(() =>
+  summaryRows.value.filter((row) => {
+    const date = String(row.date ?? '')
+    if (yearFilter.value && date.slice(0, 4) !== yearFilter.value) return false
+    if (monthFilter.value && date.slice(5, 7) !== monthFilter.value) return false
+    return true
+  }),
+)
+
 function countOf(type) {
-  return summaryRows.value.filter((row) => row.tripType === type).length
+  return dateRows.value.filter((row) => row.tripType === type).length
 }
 
 const typeOptions = computed(() => [
-  { value: '', label: `All (${summaryRows.value.length})` },
+  { value: '', label: `All (${dateRows.value.length})` },
   { value: 'inclusive', label: `Inclusive (${countOf('inclusive')})`, dot: 'bg-primary' },
   { value: 'exclusive', label: `Exclusive (${countOf('exclusive')})`, dot: 'bg-secondary' },
 ])
@@ -109,7 +144,7 @@ const typeOptions = computed(() => [
 const visibleRows = computed(() => {
   const query = search.value.trim().toLowerCase()
 
-  return summaryRows.value.filter((row) => {
+  return dateRows.value.filter((row) => {
     if (typeFilter.value && row.tripType !== typeFilter.value) return false
     if (!query) return true
 
@@ -142,7 +177,7 @@ const paginationMeta = computed(() => ({
 }))
 
 // Go back to the first page when the search or filter changes.
-watch([search, typeFilter], () => {
+watch([search, typeFilter, monthFilter, yearFilter], () => {
   page.value = 1
 })
 
@@ -353,6 +388,22 @@ function onDecisionConflict(found) {
           placeholder="Search by destination, requester, driver or plate..."
         />
         <SegmentedControl v-model="typeFilter" :options="typeOptions" label="Trip type" />
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <BaseSelect
+            v-model="monthFilter"
+            label="Month"
+            placeholder="All months"
+            allow-empty
+            :options="monthOptions"
+          />
+          <BaseSelect
+            v-model="yearFilter"
+            label="Year"
+            placeholder="All years"
+            allow-empty
+            :options="yearOptions"
+          />
+        </div>
       </div>
 
       <div v-if="loading" class="flex justify-center p-12">
@@ -363,7 +414,7 @@ function onDecisionConflict(found) {
         v-else-if="!visibleRows.length"
         title="Nothing found"
         :message="
-          typeFilter || search
+          typeFilter || search || monthFilter || yearFilter
             ? 'No requests match your filters.'
             : 'Approved requests and allocations will appear here.'
         "

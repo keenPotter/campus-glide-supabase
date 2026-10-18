@@ -60,19 +60,19 @@ function dayClass(day) {
         v-for="day in daysInMonth"
         :key="day"
         type="button"
-        class="relative flex h-12 items-center justify-center rounded-card border text-body transition disabled:cursor-default sm:h-14"
+        class="group relative flex h-12 flex-col items-center justify-start rounded-card border pt-2 text-body transition disabled:cursor-default sm:h-14"
         :class="dayClass(day)"
         :disabled="!isScheduled(day)"
         @click="emit('open-day', day)"
       >
-        {{ day }}
+        <span>{{ day }}</span>
 
         <span
-          v-if="isScheduled(day)"
-          class="absolute bottom-0.5 right-0.5 min-w-4 rounded-full bg-white/90 px-1 text-[10px] font-bold leading-4 text-ink"
+          v-if="getTripCountForDate(day) >= 2"
+          class="pointer-events-none absolute bottom-0.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-green-700 px-2 py-0.5 text-[9px] font-semibold leading-3 text-white opacity-0 shadow-sm transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 sm:text-[10px]"
           :aria-label="`${getTripCountForDate(day)} scheduled trips`"
         >
-          {{ getTripCountForDate(day) }}
+          Reserve
         </span>
 
         <span

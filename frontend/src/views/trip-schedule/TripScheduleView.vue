@@ -1,4 +1,5 @@
 <script setup>
+import { computed } from 'vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import LoadError from '@/components/ui/LoadError.vue'
@@ -9,10 +10,10 @@ import TripList from '@/components/trip-schedule/TripList.vue'
 import TripDetailsModal from '@/components/trip-schedule/TripDetailsModal.vue'
 import { useTripSchedule } from '@/composables/useTripSchedule'
 
-const typeOptions = [
-  { value: 'inclusive', label: 'Inclusive', dot: 'bg-primary' },
-  { value: 'exclusive', label: 'Exclusive', dot: 'bg-secondary' },
-]
+const typeOptions = computed(() => [
+  { value: 'inclusive', label: `Inclusive (${inclusiveTripCount.value})`, dot: 'bg-primary' },
+  { value: 'exclusive', label: `Exclusive (${exclusiveTripCount.value})`, dot: 'bg-secondary' },
+])
 
 const viewOptions = [
   { value: 'month', label: 'Month' },
@@ -31,6 +32,8 @@ const {
   loadError,
   currentTripTypeLabel,
   filteredTrips,
+  exclusiveTripCount,
+  inclusiveTripCount,
   scheduledTripList,
   upcomingTripCount,
   newTripCount,

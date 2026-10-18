@@ -11,8 +11,8 @@ const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
-const role = computed(() => route.query.role === 'faculty' ? 'faculty' : route.query.role === 'administrator' ? 'administrator' : '')
-const roleLabel = computed(() => role.value === 'faculty' ? 'Faculty' : 'Administrator')
+const role = computed(() => ['faculty', 'administrator', 'staff'].includes(route.query.role) ? route.query.role : '')
+const roleLabel = computed(() => role.value === 'faculty' ? 'User' : role.value === 'staff' ? 'Staff' : 'Admin')
 const form = reactive({ email: '', password: '' })
 const errors = ref({})
 const loading = ref(false)
@@ -50,9 +50,9 @@ async function submit() {
       <h1 class="mt-2 text-3xl font-bold text-ink">Welcome back!</h1>
       <p class="mt-2 text-sm leading-6 text-ink-muted">Sign in with your NVSU account to continue.</p>
     </div>
-    <form class="flex flex-col gap-4" @submit.prevent="submit">
-      <BaseInput v-model="form.email" label="University Email" type="email" placeholder="name@nvsu.edu.ph" :error="errors.email" required autocomplete="username" />
-      <BaseInput v-model="form.password" label="Password" type="password" placeholder="Enter your password" :error="errors.password" required autocomplete="current-password" />
+    <form class="flex flex-col gap-4" autocomplete="off" @submit.prevent="submit">
+      <BaseInput v-model="form.email" label="Username (University Email)" type="email" placeholder="name@nvsu.edu.ph" name="cg-login-username" :error="errors.email" required autocomplete="off" />
+      <BaseInput v-model="form.password" label="Password" type="password" placeholder="Enter your password" name="cg-login-password" :error="errors.password" required autocomplete="new-password" />
       <p v-if="errors.role" class="text-sm text-red-600">{{ errors.role }}</p>
       <BaseButton type="submit" :loading="loading" block class="mt-2 bg-primary-800! font-bold hover:bg-primary-900! active:bg-primary-900!">Sign in</BaseButton>
       <p class="pt-2 text-center text-xs leading-5 text-ink-muted">Your selected account type must match the role assigned to your NVSU account.</p>

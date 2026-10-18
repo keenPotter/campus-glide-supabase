@@ -25,7 +25,7 @@ const routes = [
     path: '/requests',
     name: 'requests.index',
     component: () => import('@/views/requests/RequestListView.vue'),
-    meta: { requiresAuth: true },
+    meta: { requiresAuth: true, roles: ['administrator', 'faculty'] },
   },
   {
     path: '/requests/new',
@@ -37,7 +37,7 @@ const routes = [
     path: '/requests/:id',
     name: 'requests.show',
     component: () => import('@/views/requests/RequestDetailView.vue'),
-    meta: { requiresAuth: true },
+    meta: { requiresAuth: true, roles: ['administrator', 'faculty'] },
   },
   {
     path: '/requests/:id/edit',
@@ -51,13 +51,13 @@ const routes = [
     path: '/allocations',
     name: 'allocations',
     component: () => import('@/views/allocations/AllocationsView.vue'),
-    meta: { requiresAuth: true },
+    meta: { requiresAuth: true, roles: ['administrator', 'faculty', 'staff'] },
   },
   {
     path: '/trip-schedule',
     name: 'tripSchedule',
     component: () => import('@/views/trip-schedule/TripScheduleView.vue'),
-    meta: { requiresAuth: true, roles: ['administrator'] },
+    meta: { requiresAuth: true, roles: ['administrator', 'staff'] },
   },
   {
     path: '/my-trip-schedule',
@@ -75,6 +75,12 @@ const routes = [
     path: '/preventive-maintenance',
     name: 'preventiveMaintenance',
     component: () => import('@/views/maintenance/PreventiveMaintenanceView.vue'),
+    meta: { requiresAuth: true, roles: ['administrator'] },
+  },
+  {
+    path: '/users',
+    name: 'users.index',
+    component: () => import('@/views/users/UsersView.vue'),
     meta: { requiresAuth: true, roles: ['administrator'] },
   },
   {

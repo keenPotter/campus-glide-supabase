@@ -16,7 +16,7 @@ const sidebarOpen = ref(false)
 // `also` lists other pages that belong to the same menu item,
 // so the item stays highlighted on them (for example, the request detail page).
 const navigation = computed(() => {
-  const items = [{ name: 'Dashboard', to: { name: 'dashboard' }, icon: 'grid' }]
+  const items = [{ name: 'Dashboard', to: { name: 'dashboard' }, icon: 'home' }]
 
   if (auth.isFaculty) {
     items.push(
@@ -35,6 +35,13 @@ const navigation = computed(() => {
       },
     )
   }
+  if (auth.isStaff) {
+    items.push(
+      { name: 'Allocations', to: { name: 'allocations' }, icon: 'car' },
+      { name: 'Trip Schedule', to: { name: 'tripSchedule' }, icon: 'calendar' },
+    )
+  }
+
   if (auth.isAdministrator) {
     items.push(
       {
@@ -62,6 +69,7 @@ const navigation = computed(() => {
         to: { name: 'preventiveMaintenance' },
         icon: 'wrench',
       },
+      { name: 'Users', to: { name: 'users.index' }, icon: 'users' },
       { name: 'Create User', to: { name: 'users.create' }, icon: 'user-plus' },
     )
   }
@@ -70,13 +78,15 @@ const navigation = computed(() => {
 })
 
 const icons = {
-  grid: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z',
+  home: 'M3 10.5 12 3l9 7.5M5.5 9v11h13V9M9.5 20v-6h5v6',
+  grid: 'M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z',
   list: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
   plus: 'M12 5v14M5 12h14',
   car: 'M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2M9 17h6M7 15a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM17 15a2 2 0 1 0 0 4 2 2 0 0 0 0-4z',
   calendar: 'M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z',
   wrench: 'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94z',
-  'user-plus': 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM19 8v6M22 11h-6',
+  'user-plus': 'M15 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM19 8v6M16 11h6',
+  users: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
 }
 
 function isActive(item) {

@@ -15,16 +15,19 @@ function rowGroup(row) {
 /**
  * Data for the allocation pages.
  * Faculty get their own allocations and date change requests.
- * Administrators also get the approved requests that need a vehicle and driver,
+ * Administrators and staff also get the approved requests that need a vehicle and driver,
  * the vehicle and driver lists, and the trip requests sent to them.
  */
 export function useAllocations() {
   const auth = useAuthStore()
 
+  // Administrators and staff use the full allocation page.
+  const canManage = computed(() => auth.isAdministrator || auth.isStaff)
+
   const allocations = ref([])
   const dateChanges = ref([])
 
-  // Administrators only
+  // Administrators and staff only
   const waiting = ref([])
   const vehicles = ref([])
   const drivers = ref([])
@@ -47,7 +50,7 @@ export function useAllocations() {
 
       const calls = [api.get('/reschedule-requests')]
 
-      if (auth.isAdministrator) {
+      if (canManage.value) {
         calls.push(
           api.get('/allocation-options'),
           api.get('/trip-request-shares'),
@@ -60,7 +63,7 @@ export function useAllocations() {
       allocations.value = allocationRows
       dateChanges.value = changeRows
 
-      if (auth.isAdministrator) {
+      if (canManage.value) {
         waiting.value = options.requests
         vehicles.value = options.vehicles
         drivers.value = options.drivers
@@ -108,7 +111,7 @@ export function useAllocations() {
     Object.fromEntries(pendingDateChanges.value.map((item) => [item.allocation_id, item])),
   )
 
-  /* ================= CONFLICTS (administrators) ================= */
+  /* ================= CONFLICTS (administrators and staff) ================= */
 
   const conflicts = computed(() => findConflicts(activeAllocations.value))
 
@@ -138,7 +141,7 @@ export function useAllocations() {
     }))
   })
 
-  /* ================= SUMMARY (administrators) ================= */
+  /* ================= SUMMARY (administrators and staff) ================= */
 
   // One list for the summary: allocations, approved requests that still need
   // a vehicle and driver, and trip requests sent by other administrators.

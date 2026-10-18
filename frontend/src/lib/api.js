@@ -188,11 +188,6 @@ function toLogColumns(body) {
   )
 }
 
-async function currentUserId() {
-  const { data } = await supabase.auth.getSession()
-  return data.session?.user?.id ?? null
-}
-
 // Marks finished trips as completed and frees their vehicle and driver.
 // Called before listing trips and allocations. A failure here must not break the page.
 async function completeFinishedTrips() {
@@ -263,6 +258,42 @@ route('POST', '/register', async ({ body }) => {
   const { data, error } = await supabase.functions.invoke('register-user', { body })
   if (error) throw await functionsError(error)
   return data
+})
+
+/* ---------- user accounts (administrators only) ---------- */
+
+// Pending deletion accounts go last (the view sorts by sort_group, then by name).
+route('GET', '/users', async () => ({
+  data: check(
+    await supabase
+      .from('users_ordered')
+      .select('*')
+      .order('sort_group', { ascending: true })
+      .order('last_name', { ascending: true })
+      .order('first_name', { ascending: true }),
+  ),
+}))
+
+route('PUT', '/users/:id', async ({ params, body }) => {
+  const user = await rpc('update_user', {
+    p_user_id: params.id,
+    p_first_name: body.first_name ?? null,
+    p_last_name: body.last_name ?? null,
+    p_email: body.email ?? null,
+    p_role: body.role ?? null,
+    p_position: body.position || null,
+    p_phone_number: body.phone_number || null,
+    p_password: body.password || null,
+  })
+  return { data: user }
+})
+
+// The account is disabled right away and removed after 30 days.
+route('DELETE', '/users/:id', async ({ params }) => rpc('request_user_deletion', { p_user_id: params.id }))
+
+route('POST', '/users/:id/cancel-deletion', async ({ params }) => {
+  const user = await rpc('cancel_user_deletion', { p_user_id: params.id })
+  return { data: user }
 })
 
 /* ---------- vehicle requests ---------- */
@@ -418,6 +449,7 @@ route('GET', '/allocation-options', async ({ query }) =>
   }),
 )
 
+// Administrators only (staff can reassign, but cannot create allocations).
 route('POST', '/allocations', async ({ body }) => {
   const id = await rpc('create_allocation', {
     p_vehicle_request_id: Number(body.vehicle_request_id),
@@ -527,22 +559,8 @@ route('POST', '/reschedule-requests/:id/disapprove', async ({ params, body }) =>
 /* ---------- sharing a trip request between administrators ---------- */
 
 // The other active administrators (the person who is signed in is left out).
-route('GET', '/admins', async () => {
-  const me = await currentUserId()
-
-  const rows = check(
-    await supabase
-      .from('profiles')
-      .select('id, full_name, email')
-      .eq('role', 'administrator')
-      .eq('is_active', true)
-      .order('full_name'),
-  )
-
-  return {
-    data: rows.filter((row) => row.id !== me).map((row) => ({ id: row.id, name: row.full_name, email: row.email })),
-  }
-})
+// The function answers { data: [ { id, name, email } ] }.
+route('GET', '/admins', async () => rpc('list_admins'))
 
 // Trip requests other administrators sent to me.
 route('GET', '/trip-request-shares', async () => {
@@ -592,7 +610,7 @@ async function listTrips() {
   return { data: rows.map(toTrip) }
 }
 
-// Administrators see every trip. Row Level Security limits faculty to their own trips.
+// Administrators and staff see every trip. Row Level Security limits faculty to their own trips.
 route('GET', '/trips', listTrips)
 route('GET', '/my-trips', listTrips)
 
@@ -686,6 +704,7 @@ const api = {
   post: (url, body) => dispatch('POST', url, { body }),
   put: (url, body) => dispatch('PUT', url, { body }),
   patch: (url, body) => dispatch('PATCH', url, { body }),
+  delete: (url) => dispatch('DELETE', url),
 }
 
 export default api

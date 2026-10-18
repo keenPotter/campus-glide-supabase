@@ -39,7 +39,7 @@ Deno.serve(async (req) => {
   if (!/^\S+@\S+\.\S+$/.test(b.email ?? '') || b.email.length > 255) return invalid('email', 'The email must be a valid email address.')
   if (typeof b.password !== 'string' || b.password.length < 8) return invalid('password', 'The password must be at least 8 characters.')
   if (b.password !== b.password_confirmation) return invalid('password', 'The password confirmation does not match.')
-  if (!['administrator', 'faculty'].includes(b.role)) return invalid('role', 'The selected role is invalid.')
+  if (!['administrator', 'faculty', 'staff'].includes(b.role)) return invalid('role', 'The selected role is invalid.')
   if (b.position && b.position.length > 255) return invalid('position', 'The position may not be greater than 255 characters.')
   if (b.phone_number && b.phone_number.length > 20) return invalid('phone_number', 'The phone number may not be greater than 20 characters.')
 
@@ -47,12 +47,13 @@ Deno.serve(async (req) => {
     email: b.email,
     password: b.password,
     email_confirm: true,
+    // The role must be in app_metadata. The sign-up trigger reads it from there.
+    app_metadata: { role: b.role },
     user_metadata: {
       first_name: b.first_name.trim(),
       last_name: b.last_name.trim(),
       position: b.position ?? null,
       phone_number: b.phone_number ?? null,
-      role: b.role,
     },
   })
 
@@ -61,6 +62,11 @@ Deno.serve(async (req) => {
     return invalid('email', taken ? 'The email has already been taken.' : error.message)
   }
 
-  const { data: profile } = await admin.from('profiles').select('*').eq('id', data.user.id).single()
-  return json({ data: profile, message: 'User registered successfully' }, 201)
+  const { data: profile } = await admin
+    .from('profiles')
+    .select('id, first_name, last_name, email, role, position, phone_number, is_active, deletion_requested_at')
+    .eq('id', data.user.id)
+    .single()
+
+  return json({ data: { ...profile, deletion_due_at: null }, message: 'User registered successfully' }, 201)
 })

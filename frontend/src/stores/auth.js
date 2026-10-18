@@ -20,6 +20,7 @@ export const useAuthStore = defineStore('auth', {
     role: (state) => state.user?.role ?? null,
     isAdministrator: (state) => state.user?.role === 'administrator',
     isFaculty: (state) => state.user?.role === 'faculty',
+    isStaff: (state) => state.user?.role === 'staff',
   },
 
   actions: {
@@ -31,6 +32,11 @@ export const useAuthStore = defineStore('auth', {
       })
 
       if (error) {
+        // A disabled account (for example, one scheduled for deletion) cannot sign in.
+        if (error.code === 'user_banned') {
+          const message = 'This account has been deactivated.'
+          throw httpError(422, message, { email: [message] })
+        }
         if (error.code === 'invalid_credentials' || error.status === 400) {
           const message = 'These credentials do not match our records.'
           throw httpError(422, message, { email: [message] })

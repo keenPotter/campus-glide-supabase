@@ -426,7 +426,7 @@ async function markCompleted(log) {
               <BaseButton v-if="log.status !== 'completed'" size="sm" variant="primary" @click="markCompleted(log)">
                 Mark as completed
               </BaseButton>
-              <BaseButton size="sm" variant="secondary" @click="openEdit(log)">Edit</BaseButton>
+              <BaseButton size="sm" variant="outline" @click="openEdit(log)">Edit</BaseButton>
             </div>
           </li>
         </ul>
@@ -519,7 +519,7 @@ async function markCompleted(log) {
 
       <template #footer>
         <BaseButton variant="outline" @click="showForm = false">Cancel</BaseButton>
-        <BaseButton :loading="saving" @click="save">Save maintenance</BaseButton>
+        <BaseButton :loading="saving" @click="save">Save</BaseButton>
       </template>
     </BaseModal>
   </div>

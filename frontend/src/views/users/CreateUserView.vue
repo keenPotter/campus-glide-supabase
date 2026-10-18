@@ -11,7 +11,8 @@ const toast = useToast()
 
 const roleOptions = [
   { value: 'administrator', label: 'Administrator' },
-  { value: 'faculty', label: 'Faculty' },
+  { value: 'faculty', label: 'User' },
+  { value: 'staff', label: 'Staff' },
 ]
 
 function emptyForm() {
@@ -38,14 +39,14 @@ async function submit() {
   notAllowed.value = false
 
   try {
-    // The admin's Bearer token is added automatically by the api.js request interceptor.
+    // The admin's session is added automatically by the data layer (lib/api.js).
     await api.post('/register', { ...form })
     toast.success('User created successfully.')
     Object.assign(form, emptyForm())
   } catch (error) {
     const status = error?.response?.status
 
-    // 401 (not logged in) is handled in api.js: it clears the token and goes to /login.
+    // 401 (not logged in) is handled in api.js: it signs out and goes to /login.
     if (status === 403) {
       notAllowed.value = true
       return
@@ -66,7 +67,7 @@ async function submit() {
     <div>
       <h1 class="text-page-title">Create user</h1>
       <p class="mt-0.5 text-small text-ink-muted">
-        Add a new administrator or faculty account.
+        Add an administrator, user, or staff account.
       </p>
     </div>
 

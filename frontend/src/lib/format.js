@@ -94,7 +94,8 @@ export function formatMoney(value) {
 
 export const ROLE_LABELS = {
   administrator: 'Administrator',
-  faculty: 'Faculty',
+  faculty: 'User',
+  staff: 'Staff',
 }
 
 export const TRIP_TYPE_LABELS = {

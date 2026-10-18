@@ -218,11 +218,8 @@ async function printAssessment() {
 </script>
 
 <template>
-  <BaseCard
-    title="Maintenance checklist"
-    subtitle="Click a vehicle to assess it, then print the monthly checklist"
-    :padded="false"
-  >
+  <BaseCard title="Maintenance checklist" subtitle="Click a vehicle to assess it, then print the monthly checklist"
+    :padded="false">
     <div class="border-b border-line p-card">
       <BaseInput v-model="search" type="search" placeholder="Search by plate number or model..." />
     </div>
@@ -236,21 +233,15 @@ async function printAssessment() {
       <div class="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-primary" />
     </div>
 
-    <EmptyState
-      v-else-if="!filtered.length"
-      title="No vehicles found"
-      :message="search ? 'No vehicles match your search.' : 'Vehicles of the motorpool will appear here.'"
-    />
+    <EmptyState v-else-if="!filtered.length" title="No vehicles found"
+      :message="search ? 'No vehicles match your search.' : 'Vehicles of the motorpool will appear here.'" />
 
     <template v-else>
       <!-- Card view (phones and tablets). Tap a card to assess it. -->
       <ul class="divide-y divide-line lg:hidden">
-        <li
-          v-for="vehicle in pageItems"
-          :key="vehicle.id"
+        <li v-for="vehicle in pageItems" :key="vehicle.id"
           class="flex cursor-pointer flex-col gap-2 p-card transition active:bg-neutral-50"
-          @click="onRowClick($event, vehicle)"
-        >
+          @click="onRowClick($event, vehicle)">
           <div class="min-w-0">
             <p class="font-medium text-ink">
               {{ vehicle.plate_number }}
@@ -266,7 +257,7 @@ async function printAssessment() {
           </dl>
 
           <div class="flex justify-end gap-2">
-            <BaseButton size="sm" variant="secondary" @click="openAssess(vehicle)">Assess</BaseButton>
+            <BaseButton size="sm" variant="primary" @click="openAssess(vehicle)">Assess</BaseButton>
           </div>
         </li>
       </ul>
@@ -284,14 +275,8 @@ async function printAssessment() {
           </thead>
 
           <tbody class="divide-y divide-line">
-            <tr
-              v-for="vehicle in pageItems"
-              :key="vehicle.id"
-              class="cursor-pointer hover:bg-neutral-50"
-              tabindex="0"
-              @click="onRowClick($event, vehicle)"
-              @keydown.enter="onRowClick($event, vehicle)"
-            >
+            <tr v-for="vehicle in pageItems" :key="vehicle.id" class="cursor-pointer hover:bg-neutral-50" tabindex="0"
+              @click="onRowClick($event, vehicle)" @keydown.enter="onRowClick($event, vehicle)">
               <td class="px-2 py-3 align-top xl:px-card">
                 <p class="font-medium text-ink">{{ vehicle.plate_number }}</p>
               </td>
@@ -312,80 +297,40 @@ async function printAssessment() {
 
     <PaginationBar v-if="!loading" :meta="paginationMeta" @change="(value) => (page = value)" />
 
-    <BaseModal
-      :open="showForm"
-      title="Assess vehicle"
-      :subtitle="assessing ? `${assessing.plate_number} — ${modelOf(assessing)}` : ''"
-      @close="closeForm"
-    >
+    <BaseModal :open="showForm" title="Assess vehicle"
+      :subtitle="assessing ? `${assessing.plate_number} — ${modelOf(assessing)}` : ''" @close="closeForm">
       <div class="flex flex-col gap-4">
         <div class="grid gap-4 sm:grid-cols-2">
           <BaseInput v-model="form.pmuv_no" label="PMUV No." :error="errors.pmuv_no" />
-          <BaseInput
-            v-model="form.inspection_date"
-            label="Inspection date"
-            type="date"
-            :error="errors.inspection_date"
-            required
-          />
-          <BaseInput
-            v-model="form.inspector_mechanic"
-            label="Inspector / mechanic"
-            :error="errors.inspector_mechanic"
-          />
-          <BaseInput
-            v-model="form.current_mileage"
-            label="Current mileage (km)"
-            type="number"
-            min="0"
-            step="1"
-            :error="errors.current_mileage"
-          />
+          <BaseInput v-model="form.inspection_date" label="Inspection date" type="date" :error="errors.inspection_date"
+            required />
+          <BaseInput v-model="form.inspector_mechanic" label="Inspector / mechanic"
+            :error="errors.inspector_mechanic" />
+          <BaseInput v-model="form.current_mileage" label="Current mileage (km)" type="number" min="0" step="1"
+            :error="errors.current_mileage" />
         </div>
 
         <div>
           <h3 class="mb-3 font-semibold">Last service dates</h3>
           <div class="grid gap-4 sm:grid-cols-2">
-            <BaseInput
-              v-for="item in DATE_FIELDS"
-              :key="item.field"
-              v-model="form[item.field]"
-              :label="item.label"
-              type="date"
-              :error="errors[item.field]"
-            />
+            <BaseInput v-for="item in DATE_FIELDS" :key="item.field" v-model="form[item.field]" :label="item.label"
+              type="date" :error="errors[item.field]" />
           </div>
         </div>
 
         <div>
           <h3 class="mb-3 font-semibold">Vehicle condition</h3>
           <div class="grid gap-4 sm:grid-cols-2">
-            <BaseSelect
-              v-for="item in CONDITION_FIELDS"
-              :key="item.field"
-              v-model="form[item.field]"
-              :label="item.label"
-              placeholder="Not rated"
-              :options="ratingOptions"
-              allow-empty
-              :error="errors[item.field]"
-            />
+            <BaseSelect v-for="item in CONDITION_FIELDS" :key="item.field" v-model="form[item.field]"
+              :label="item.label" placeholder="Not rated" :options="ratingOptions" allow-empty
+              :error="errors[item.field]" />
           </div>
         </div>
 
-        <BaseTextarea
-          v-model="form.other_parts"
-          label="Other parts inspected"
-          :rows="6"
-          :error="errors.other_parts"
-        />
+        <BaseTextarea v-model="form.other_parts" label="Other parts inspected" :rows="6" :error="errors.other_parts" />
         <BaseTextarea v-model="form.remarks" label="Remarks" :rows="6" :error="errors.remarks" />
-        <BaseTextarea
-          v-model="form.supervisor_recommendation"
-          label="Supervisor's recommendation"
-          :rows="6"
-          :error="errors.supervisor_recommendation"
-        />
+        <BaseTextarea v-model="form.supervisor_recommendation" label="Supervisor's recommendation" :rows="6"
+          :error="errors.supervisor_recommendation" />
 
         <p v-if="formError" class="rounded-card bg-red-50 p-3 text-small font-medium text-red-700">
           {{ formError }}

@@ -11,6 +11,8 @@ defineProps({
   min: { type: [String, Number], default: undefined },
   max: { type: [String, Number], default: undefined },
   step: { type: [String, Number], default: undefined },
+  autocomplete: { type: String, default: undefined },
+  name: { type: String, default: undefined },
 })
 
 defineEmits(['update:modelValue'])
@@ -31,6 +33,8 @@ defineEmits(['update:modelValue'])
       :min="min"
       :max="max"
       :step="step"
+      :autocomplete="autocomplete"
+      :name="name"
       class="field-control"
       :class="{ 'field-error': error }"
       @input="$emit('update:modelValue', $event.target.value)"

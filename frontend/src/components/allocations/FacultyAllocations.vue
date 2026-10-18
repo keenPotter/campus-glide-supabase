@@ -1,11 +1,12 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useAllocations } from '@/composables/useAllocations'
 import { useToast } from '@/composables/useToast'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import LoadError from '@/components/ui/LoadError.vue'
+import PaginationBar from '@/components/ui/PaginationBar.vue'
 import SegmentedControl from '@/components/ui/SegmentedControl.vue'
 import AllocationCard from '@/components/allocations/AllocationCard.vue'
 import RescheduleModal from '@/components/allocations/RescheduleModal.vue'
@@ -25,7 +26,10 @@ const {
   load,
 } = useAllocations()
 
+const PAGE_SIZE = 6
+
 const typeFilter = ref('')
+const page = ref(1)
 const rescheduleTarget = ref(null)
 
 const tones = {
@@ -56,6 +60,30 @@ const visible = computed(() =>
     ? allocations.value.filter((item) => item.vehicle_request?.trip_type === typeFilter.value)
     : allocations.value,
 )
+
+/* ================= PAGINATION ================= */
+
+const pageCount = computed(() => Math.max(1, Math.ceil(visible.value.length / PAGE_SIZE)))
+
+const pagedVisible = computed(() =>
+  visible.value.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE),
+)
+
+const paginationMeta = computed(() => ({
+  current_page: page.value,
+  last_page: pageCount.value,
+  total: visible.value.length,
+}))
+
+// Go back to the first page when the filter changes.
+watch(typeFilter, () => {
+  page.value = 1
+})
+
+// If the list gets shorter (for example after a reload), stay on a page that exists.
+watch(pageCount, (count) => {
+  if (page.value > count) page.value = count
+})
 
 function onRescheduleSaved(message) {
   rescheduleTarget.value = null
@@ -109,13 +137,19 @@ function onRescheduleSaved(message) {
 
       <div v-else class="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <AllocationCard
-          v-for="item in visible"
+          v-for="item in pagedVisible"
           :key="item.id"
           :allocation="item"
           :pending-change="pendingByAllocation[item.id] ?? null"
           @reschedule="rescheduleTarget = $event"
         />
       </div>
+
+      <PaginationBar
+        v-if="!loading && visible.length > PAGE_SIZE"
+        :meta="paginationMeta"
+        @change="(value) => (page = value)"
+      />
     </BaseCard>
 
     <BaseCard v-if="dateChanges.length" title="My date change requests">

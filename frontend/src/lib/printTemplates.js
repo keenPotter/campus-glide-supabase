@@ -1,23 +1,23 @@
-import nvsuLogo from '@/assets/nvsu-logo.png'
+import nvsuLogo from "@/assets/nvsu-logo.png";
 
 // The two printable forms. They were Blade views in the Laravel app (resources/views/print).
 // The backend now sends only the values (get_vehicle_request_print / get_checklist_print),
 // and these functions turn them into the same HTML pages.
 
 const esc = (value) =>
-  String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
+  String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 
 // The form is shown in a frame without its own address, so the logo needs a full URL.
 function logoUrl() {
   try {
-    return new URL(nvsuLogo, window.location.href).href
+    return new URL(nvsuLogo, window.location.href).href;
   } catch {
-    return ''
+    return "";
   }
 }
 
@@ -28,15 +28,15 @@ function requestCopy(d, logo) {
   <section class="form">
     <table class="header">
       <tr>
-        <td class="logo">${logo ? `<img src="${esc(logo)}" alt="NVSU logo">` : ''}</td>
+        <td class="logo">${logo ? `<img src="${esc(logo)}" alt="NVSU logo">` : ""}</td>
         <td>
           <div class="school">Republic of the Philippines<br><b>NUEVA VIZCAYA STATE UNIVERSITY</b><br>Bayombong, Nueva Vizcaya</div>
           <div class="name">REQUEST FOR USE OF VEHICLE</div>
         </td>
       </tr>
     </table>
-
-    <div class="ruv"><b>RUV No.:</b> <span class="blank w45"></span></div>
+    
+    <div class="ruv"><b>RUV No.:</b> ${d.ruvNumber ? `<u class="strong">${esc(d.ruvNumber)}</u>` : '<span class="blank w45"></span>'}</div>
 
     <div class="grid">
       <div class="col-left">
@@ -56,7 +56,7 @@ function requestCopy(d, logo) {
     <div class="grid travel">
       <div class="col-left">
         <p><b>Date of Travel:</b> <u>${esc(d.travelDate)}</u></p>
-        <p><b>Days of Travel:</b> <span class="${d.tripType === 'inclusive' ? 'u' : ''}">Inclusive</span>/<span class="${d.tripType === 'exclusive' ? 'u' : ''}">Exclusive</span>: <u>${esc(d.days)}</u></p>
+        <p><b>Days of Travel:</b> <span class="${d.tripType === "inclusive" ? "u" : ""}">Inclusive</span>/<span class="${d.tripType === "exclusive" ? "u" : ""}">Exclusive</span>: <u>${esc(d.days)}</u></p>
         <p class="hint">(Please underline)</p>
       </div>
       <div class="col-right">
@@ -108,11 +108,11 @@ function requestCopy(d, logo) {
       <i>Note: Please accomplish this form three (3) days before travel.</i><br>
       <small>NVSU-FR-PPS-13-02 (092524)</small>
     </div>
-  </section>`
+  </section>`;
 }
 
 export function vehicleRequestHtml(d) {
-  const logo = logoUrl()
+  const logo = logoUrl();
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -183,29 +183,33 @@ ${requestCopy(d, logo)}
 ${requestCopy(d, logo)}
 </div>
 </body>
-</html>`
+</html>`;
 }
 
 /* ================= PREVENTIVE MAINTENANCE CHECKLIST ================= */
 
 export function checklistHtml(d) {
   const serviceDates = (d.serviceDates ?? [])
-    .map((service) => `<td><span>${esc(service.label)}</span><strong>${esc(service.value)}</strong></td>`)
-    .join('')
+    .map(
+      (service) =>
+        `<td><span>${esc(service.label)}</span><strong>${esc(service.value)}</strong></td>`,
+    )
+    .join("");
 
-  const mark = (item, rating) => (item.rating === rating ? '&#10003;' : '&nbsp;')
+  const mark = (item, rating) =>
+    item.rating === rating ? "&#10003;" : "&nbsp;";
 
   const items = (d.items ?? [])
     .map(
       (item) => `
         <tr>
           <th scope="row">${esc(item.label)}</th>
-          <td class="rating">${mark(item, 'excellent')}</td>
-          <td class="rating">${mark(item, 'good')}</td>
-          <td class="rating">${mark(item, 'poor')}</td>
+          <td class="rating">${mark(item, "excellent")}</td>
+          <td class="rating">${mark(item, "good")}</td>
+          <td class="rating">${mark(item, "poor")}</td>
         </tr>`,
     )
-    .join('')
+    .join("");
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -313,5 +317,5 @@ export function checklistHtml(d) {
   </div>
 </div>
 </body>
-</html>`
+</html>`;
 }

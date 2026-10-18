@@ -105,6 +105,19 @@ export function useTripSchedule() {
     }),
   )
 
+  // Totals for the Inclusive/Exclusive switch.
+  // Count only trips that qualify for the schedule.
+  const exclusiveTripCount = computed(() =>
+    scheduledTrips.value.filter(
+      (trip) => isScheduledTrip(trip) && tripType(trip) === 'exclusive',
+    ).length,
+  )
+  const inclusiveTripCount = computed(() =>
+    scheduledTrips.value.filter(
+      (trip) => isScheduledTrip(trip) && tripType(trip) === 'inclusive',
+    ).length,
+  )
+
   const scheduledTripList = computed(() =>
     [...filteredTrips.value].sort(
       (a, b) => parseDate(getTripStartDate(a)) - parseDate(getTripStartDate(b)),
@@ -290,6 +303,8 @@ export function useTripSchedule() {
     loadError,
     currentTripTypeLabel,
     filteredTrips,
+    exclusiveTripCount,
+    inclusiveTripCount,
     scheduledTripList,
     upcomingTripCount,
     newTripCount,
