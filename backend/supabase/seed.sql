@@ -8,9 +8,6 @@ create or replace function pg_temp.uid(n int) returns uuid language sql as $$
 $$;
 
 -- Running this seed on a database with data you want to keep will wipe it, so only use it on dev or demo projects.
-delete from auth.users
-where id in (select pg_temp.uid(n) from generate_series(1, 13) n);
-
 do $$
 declare r record;
 begin
@@ -18,6 +15,10 @@ begin
     execute format('truncate table public.%I restart identity cascade', r.tablename);
   end loop;
 end $$;
+
+-- Clear referencing public rows before deleting users whose profiles may be allocators.
+delete from auth.users
+where id in (select pg_temp.uid(n) from generate_series(1, 13) n);
 
 -- ---------------------------------------------------------------- users (auth + profile via trigger)
 insert into auth.users (
