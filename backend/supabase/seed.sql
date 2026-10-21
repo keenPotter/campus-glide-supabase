@@ -1,7 +1,8 @@
 -- Demo data (replaces database/seeders/*). All passwords = "password".
--- IDs: users 1-2 administrators | 3-12 faculty (10 is the University President)
--- Requests 1-4 completed trips | 5-6 in progress (2026-10-12) | 7-8 scheduled | 9 needs allocation
---          10-17 pending | 18-25 disapproved
+-- IDs: users 1-2 administrators | 3 staff | 4-8 faculty (4 is the University President)
+-- Each faculty account has 5 requests (faculty1 = exclusive trips only, faculty2-5 = inclusive trips only)
+-- Requests 1-4 completed trips | 5-6 in progress (2026-10-12) | 7-9 scheduled | 13 scheduled, needs reassignment
+--          10-12, 14-16 pending (11 was edited after approval) | 17 pending, conflict | 18-25 disapproved
 
 create or replace function pg_temp.uid(n int) returns uuid language sql as $$
     select ('00000000-0000-0000-0000-' || lpad(n::text, 12, '0'))::uuid
@@ -34,18 +35,14 @@ select
                        'position', u.job, 'phone_number', u.phone, 'role', u.role),
     now(), now(), '', '', '', ''
 from (values
-    (1,  'tony.basatan@nvsu.edu.ph',    'Tony O.',         'Basatan',    'Chief, Motorpool',    '09171234501', 'administrator'),
-    (2,  'jayson.pimentel@nvsu.edu.ph', 'Jayson R.',       'Pimentel',   'Unit Head-GSU',       '09171234502', 'administrator'),
-    (3,  'marife.aliaga@nvsu.edu.ph',   'Marife',          'Aliaga',     'Professor',           '09201234503', 'faculty'),
-    (4,  'vernyll.asis@nvsu.edu.ph',    'Vernyll Jan',     'Asis',       'Assistant Professor', '09201234504', 'faculty'),
-    (5,  'krizsha.salinas@nvsu.edu.ph', 'Krizsha Ellaine', 'Salinas',    'Associate Professor', '09201234505', 'faculty'),
-    (6,  'dennis.directo@nvsu.edu.ph',  'Dennis',          'Directo',    'Instructor',          '09201234506', 'faculty'),
-    (7,  'mark.viernes@nvsu.edu.ph',    'Mark John',       'Viernes',    'Assistant Professor', '09201234507', 'faculty'),
-    (8,  'gwen.gagasa@nvsu.edu.ph',     'Gwen Kyle',       'Gagasa',     'Instructor',          '09201234508', 'faculty'),
-    (9,  'percival.labog@nvsu.edu.ph',  'Percival',        'Labog',      'Associate Professor', '09201234509', 'faculty'),
-    (10, 'wilfredo.dumale@nvsu.edu.ph', 'Wilfredo',        'Dumale Jr.', 'University President','09201234510', 'faculty'),
-    (11, 'gerals.perez@nvsu.edu.ph',    'Gerals',          'Perez',      'Professor',           '09201234511', 'faculty'),
-    (12, 'arnel.agustin@nvsu.edu.ph',   'Arnel',           'Agustin',    'Instructor',          '09201234512', 'faculty')
+    (1, 'admin1@nvsu.edu.ph',   'Tony',         'Basatan',    'Chief, Motorpool',     '09171234501', 'administrator'),
+    (2, 'admin2@nvsu.edu.ph',   'Jayson',       'Pimentel',   'Unit Head-GSU',        '09171234502', 'administrator'),
+    (3, 'staff1@nvsu.edu.ph',   'Reonel',          'Makil',   'Motorpool Staff',      '09171234502', 'staff'),
+    (4, 'faculty1@nvsu.edu.ph', 'Faculty',         'One',     'University President', '09201234510', 'faculty'),
+    (5, 'faculty2@nvsu.edu.ph', 'Faculty',         'Two',     'Professor',            '09201234503', 'faculty'),
+    (6, 'faculty3@nvsu.edu.ph', 'Faculty',         'Three',   'Associate Professor',  '09201234505', 'faculty'),
+    (7, 'faculty4@nvsu.edu.ph', 'Faculty',         'Four',    'Instructor',           '09201234506', 'faculty'),
+    (8, 'faculty5@nvsu.edu.ph', 'Faculty',         'Five',    'Instructor',           '09201234508', 'faculty')
 ) as u(id, email, first_name, last_name, job, phone, role);
 
 insert into auth.identities (id, user_id, identity_data, provider, provider_id, last_sign_in_at, created_at, updated_at)
@@ -80,62 +77,75 @@ values
 -- ---------------------------------------------------------------- vehicle requests
 insert into public.vehicle_requests (
     id, requester_id, request_date, trip_date, trip_end_date, trip_type, departure_time, destination, purpose,
-    estimated_return_time, passengers, number_of_passengers, status, disapproval_reason, approved_by, approved_date
+    estimated_return_time, passengers, number_of_passengers, status, disapproval_reason, edit_reason,
+    approved_by, approved_date
 ) values
     -- Approved
-    (1,  pg_temp.uid(3),  '2026-08-28 09:15:00+08', '2026-09-03', '2026-09-03', 'inclusive', '08:00', 'NVSU Main Campus, Bayombong, Nueva Vizcaya', 'Faculty general assembly and department meeting', '16:00', 'Marife Aliaga and 3 faculty members', 4, 'approved', null, pg_temp.uid(1), '2026-08-31 10:00:00+08'),
-    (2,  pg_temp.uid(10), '2026-09-02 13:40:00+08', '2026-09-08', '2026-09-09', 'exclusive', '05:00', 'Office of the Congressman, House of Representatives, Quezon City, Metro Manila', 'Meeting with the congressman on the university budget and infrastructure projects', '20:00', 'Wilfredo Dumale Jr. and 2 university officials', 3, 'approved', null, pg_temp.uid(2), '2026-09-04 09:30:00+08'),
-    (3,  pg_temp.uid(6),  '2026-09-09 10:05:00+08', '2026-09-15', '2026-09-15', 'inclusive', '09:00', 'Provincial Capitol, Bayombong, Nueva Vizcaya', 'Coordination meeting with provincial officials on extension programs', '15:00', 'Dennis Directo and 2 faculty members', 3, 'approved', null, pg_temp.uid(1), '2026-09-10 14:00:00+08'),
-    (4,  pg_temp.uid(8),  '2026-09-17 08:20:00+08', '2026-09-22', '2026-09-22', 'inclusive', '08:30', 'Municipal Hall, Solano, Nueva Vizcaya', 'Meeting with municipal officials on community partnership', '17:00', 'Gwen Kyle Gagasa and 5 faculty members', 6, 'approved', null, pg_temp.uid(2), '2026-09-18 11:00:00+08'),
-    (5,  pg_temp.uid(7),  '2026-10-06 11:10:00+08', '2026-10-12', '2026-10-12', 'inclusive', '07:30', 'Office of the Congressman, Bayombong, Nueva Vizcaya', 'Meeting with the congressman and staff on the scholarship program', '16:30', 'Mark John Viernes and 3 faculty members', 4, 'approved', null, pg_temp.uid(1), '2026-10-08 09:45:00+08'),
-    (6,  pg_temp.uid(9),  '2026-10-07 14:25:00+08', '2026-10-12', '2026-10-12', 'inclusive', '08:00', 'DepEd Schools Division Office, Bayombong, Nueva Vizcaya', 'Meeting with DepEd officials on the senior high school partnership', '15:00', 'Percival Labog and 2 faculty members', 3, 'approved', null, pg_temp.uid(2), '2026-10-08 10:15:00+08'),
-    (7,  pg_temp.uid(10), '2026-10-05 09:30:00+08', '2026-10-15', '2026-10-16', 'exclusive', '05:00', 'Department of Budget and Management, Manila', 'Meeting with DBM officials on the proposed university budget', '20:00', 'Wilfredo Dumale Jr. and 2 university officials', 3, 'approved', null, pg_temp.uid(1), '2026-10-07 10:00:00+08'),
-    (8,  pg_temp.uid(11), '2026-10-06 15:00:00+08', '2026-10-21', '2026-10-21', 'inclusive', '09:00', 'NVSU Main Campus, Bayombong, Nueva Vizcaya', 'Academic council meeting of all campus faculty', '16:00', 'Gerals Perez and 11 faculty members', 12, 'approved', null, pg_temp.uid(2), '2026-10-09 09:00:00+08'),
-    (9,  pg_temp.uid(12), '2026-10-08 10:40:00+08', '2026-10-22', '2026-10-22', 'inclusive', '08:00', 'Provincial Capitol, Bayombong, Nueva Vizcaya', 'Presentation of the extension program to the provincial board', '17:00', 'Arnel Agustin and 3 faculty members', 4, 'approved', null, pg_temp.uid(1), '2026-10-09 16:20:00+08'),
+    (1,  pg_temp.uid(5), '2026-08-28 09:15:00+08', '2026-09-03', '2026-09-03', 'inclusive', '08:00', 'NVSU Main Campus, Bayombong, Nueva Vizcaya', 'Faculty general assembly and department meeting', '16:00', 'Marife Aliaga and 3 faculty members', 4, 'approved', null, null, pg_temp.uid(1), '2026-08-31 10:00:00+08'),
+    (2,  pg_temp.uid(4), '2026-09-02 13:40:00+08', '2026-09-08', '2026-09-09', 'exclusive', '05:00', 'Office of the Congressman, House of Representatives, Quezon City, Metro Manila', 'Meeting with the congressman on the university budget and infrastructure projects', '20:00', 'Wilfredo Dumale Jr. and 2 university officials', 3, 'approved', null, null, pg_temp.uid(2), '2026-09-04 09:30:00+08'),
+    (3,  pg_temp.uid(6), '2026-09-09 10:05:00+08', '2026-09-15', '2026-09-15', 'inclusive', '09:00', 'Provincial Capitol, Bayombong, Nueva Vizcaya', 'Coordination meeting with provincial officials on extension programs', '15:00', 'Krizsha Ellaine Salinas and 2 faculty members', 3, 'approved', null, null, pg_temp.uid(1), '2026-09-10 14:00:00+08'),
+    (4,  pg_temp.uid(7), '2026-09-17 08:20:00+08', '2026-09-22', '2026-09-22', 'inclusive', '08:30', 'Municipal Hall, Solano, Nueva Vizcaya', 'Meeting with municipal officials on community partnership', '17:00', 'Dennis Directo and 5 faculty members', 6, 'approved', null, null, pg_temp.uid(2), '2026-09-18 11:00:00+08'),
+    (5,  pg_temp.uid(6), '2026-10-06 11:10:00+08', '2026-10-12', '2026-10-12', 'inclusive', '07:30', 'Office of the Congressman, Bayombong, Nueva Vizcaya', 'Meeting with the congressman and staff on the scholarship program', '16:30', 'Krizsha Ellaine Salinas and 3 faculty members', 4, 'approved', null, null, pg_temp.uid(1), '2026-10-08 09:45:00+08'),
+    (6,  pg_temp.uid(7), '2026-10-07 14:25:00+08', '2026-10-12', '2026-10-12', 'inclusive', '08:00', 'DepEd Schools Division Office, Bayombong, Nueva Vizcaya', 'Meeting with DepEd officials on the senior high school partnership', '15:00', 'Dennis Directo and 2 faculty members', 3, 'approved', null, null, pg_temp.uid(2), '2026-10-08 10:15:00+08'),
+    (7,  pg_temp.uid(4), '2026-10-05 09:30:00+08', '2026-10-15', '2026-10-16', 'exclusive', '05:00', 'Department of Budget and Management, Manila', 'Meeting with DBM officials on the proposed university budget', '20:00', 'Wilfredo Dumale Jr. and 2 university officials', 3, 'approved', null, null, pg_temp.uid(1), '2026-10-07 10:00:00+08'),
+    (8,  pg_temp.uid(8), '2026-10-06 15:00:00+08', '2026-10-21', '2026-10-21', 'inclusive', '09:00', 'NVSU Main Campus, Bayombong, Nueva Vizcaya', 'Academic council meeting of all campus faculty', '16:00', 'Gwen Kyle Gagasa and 11 faculty members', 12, 'approved', null, null, pg_temp.uid(2), '2026-10-09 09:00:00+08'),
+    (9,  pg_temp.uid(7), '2026-10-08 10:40:00+08', '2026-10-22', '2026-10-22', 'inclusive', '08:00', 'Provincial Capitol, Bayombong, Nueva Vizcaya', 'Presentation of the extension program to the provincial board', '17:00', 'Dennis Directo and 3 faculty members', 4, 'approved', null, null, pg_temp.uid(1), '2026-10-09 16:20:00+08'),
+    (13, pg_temp.uid(5), '2026-10-12 08:40:00+08', '2026-10-20', '2026-10-20', 'inclusive', '08:00', 'NVSU Main Campus, Bayombong, Nueva Vizcaya', 'Department heads meeting on the second semester schedule', '17:00', 'Marife Aliaga and 7 department heads', 8, 'approved', null, null, pg_temp.uid(2), '2026-10-13 09:15:00+08'),
     -- Pending
-    (10, pg_temp.uid(4),  '2026-10-09 10:15:00+08', '2026-10-14', '2026-10-14', 'inclusive', '08:00', 'Municipal Hall, Bambang, Nueva Vizcaya', 'Meeting with the municipal planning office on the campus expansion project', '16:00', 'Vernyll Jan Asis and 2 faculty members', 3, 'pending', null, null, null),
-    (11, pg_temp.uid(5),  '2026-10-08 13:30:00+08', '2026-10-19', '2026-10-19', 'inclusive', '09:00', 'Provincial Health Office, Bayombong, Nueva Vizcaya', 'Meeting with the health office on the nursing students community program', '15:30', 'Krizsha Ellaine Salinas and 4 faculty members', 5, 'pending', null, null, null),
-    (12, pg_temp.uid(10), '2026-10-09 15:45:00+08', '2026-10-26', '2026-10-27', 'exclusive', '05:00', 'CHED Central Office, Quezon City, Metro Manila', 'Meeting with CHED officials on program accreditation', '19:00', 'Wilfredo Dumale Jr. and 2 university officials', 3, 'pending', null, null, null),
-    (13, pg_temp.uid(3),  '2026-10-12 08:40:00+08', '2026-10-20', '2026-10-20', 'inclusive', '08:00', 'NVSU Main Campus, Bayombong, Nueva Vizcaya', 'Department heads meeting on the second semester schedule', '17:00', 'Marife Aliaga and 7 department heads', 8, 'pending', null, null, null),
-    (14, pg_temp.uid(8),  '2026-10-12 09:20:00+08', '2026-10-28', '2026-10-28', 'inclusive', '08:00', 'Provincial Capitol, Bayombong, Nueva Vizcaya', 'Meeting with the provincial planning office on a research partnership', '16:00', 'Gwen Kyle Gagasa and 3 faculty members', 4, 'pending', null, null, null),
-    (15, pg_temp.uid(10), '2026-10-12 10:05:00+08', '2026-11-02', '2026-11-02', 'exclusive', '04:00', 'Ninoy Aquino International Airport (NAIA) Terminal 3, Pasay City, Metro Manila', 'Fetch the University President at the airport', '23:00', 'Wilfredo Dumale Jr.', 1, 'pending', null, null, null),
-    (16, pg_temp.uid(12), '2026-10-12 11:00:00+08', '2026-10-29', '2026-10-29', 'inclusive', '09:00', 'DTI Provincial Office, Bayombong, Nueva Vizcaya', 'Meeting with DTI officials on the entrepreneurship seminar', '15:00', 'Arnel Agustin and 2 faculty members', 3, 'pending', null, null, null),
-    (17, pg_temp.uid(9),  '2026-10-09 16:30:00+08', '2026-10-30', '2026-10-30', 'inclusive', '08:30', 'Municipal Hall, Solano, Nueva Vizcaya', 'Meeting with local officials on the barangay IT training program', '16:30', 'Percival Labog and 5 faculty members', 6, 'pending', null, null, null),
+    (10, pg_temp.uid(5), '2026-10-09 10:15:00+08', '2026-10-14', '2026-10-14', 'inclusive', '08:00', 'Municipal Hall, Bambang, Nueva Vizcaya', 'Meeting with the municipal planning office on the campus expansion project', '16:00', 'Marife Aliaga and 2 faculty members', 3, 'pending', null, null, null, null),
+    (11, pg_temp.uid(6), '2026-10-08 13:30:00+08', '2026-10-19', '2026-10-19', 'inclusive', '09:00', 'Provincial Health Office, Bayombong, Nueva Vizcaya', 'Meeting with the health office on the nursing students community program', '15:30', 'Krizsha Ellaine Salinas and 4 faculty members', 5, 'pending', null, 'The provincial health office moved the meeting to a later date.', null, null),
+    (12, pg_temp.uid(4), '2026-10-09 15:45:00+08', '2026-10-26', '2026-10-27', 'exclusive', '05:00', 'CHED Central Office, Quezon City, Metro Manila', 'Meeting with CHED officials on program accreditation', '19:00', 'Wilfredo Dumale Jr. and 2 university officials', 3, 'pending', null, null, null, null),
+    (14, pg_temp.uid(8), '2026-10-12 09:20:00+08', '2026-10-28', '2026-10-28', 'inclusive', '08:00', 'Provincial Capitol, Bayombong, Nueva Vizcaya', 'Meeting with the provincial planning office on a research partnership', '16:00', 'Gwen Kyle Gagasa and 3 faculty members', 4, 'pending', null, null, null, null),
+    (15, pg_temp.uid(4), '2026-10-12 10:05:00+08', '2026-11-02', '2026-11-02', 'exclusive', '04:00', 'Ninoy Aquino International Airport (NAIA) Terminal 3, Pasay City, Metro Manila', 'Fetch the University President at the airport', '23:00', 'Wilfredo Dumale Jr.', 1, 'pending', null, null, null, null),
+    (16, pg_temp.uid(7), '2026-10-12 11:00:00+08', '2026-10-29', '2026-10-29', 'inclusive', '09:00', 'DTI Provincial Office, Bayombong, Nueva Vizcaya', 'Meeting with DTI officials on the entrepreneurship seminar', '15:00', 'Dennis Directo and 2 faculty members', 3, 'pending', null, null, null, null),
+    (17, pg_temp.uid(6), '2026-10-09 16:30:00+08', '2026-10-21', '2026-10-21', 'inclusive', '08:30', 'Municipal Hall, Solano, Nueva Vizcaya', 'Meeting with local officials on the barangay IT training program', '16:30', 'Krizsha Ellaine Salinas and 9 faculty members', 10, 'pending', null, null, null, null),
     -- Disapproved
-    (18, pg_temp.uid(7),  '2026-09-04 08:50:00+08', '2026-09-10', '2026-09-10', 'inclusive', '08:00', 'Provincial Capitol, Bayombong, Nueva Vizcaya', 'Meeting with provincial officials on the IT skills program', '16:00', 'Mark John Viernes and 2 faculty members', 3, 'disapproved', 'The vehicle needed for this trip is under maintenance on the requested date.', pg_temp.uid(1), null),
-    (19, pg_temp.uid(11), '2026-09-11 09:10:00+08', '2026-09-17', '2026-09-17', 'inclusive', '09:00', 'NVSU Main Campus, Bayombong, Nueva Vizcaya', 'Faculty planning meeting on the research agenda', '17:00', 'Gerals Perez and 9 faculty members', 10, 'disapproved', 'The requested date is already fully booked. Please choose another date.', pg_temp.uid(2), null),
-    (20, pg_temp.uid(10), '2026-09-16 14:00:00+08', '2026-09-24', '2026-09-25', 'exclusive', '05:00', 'DOST Central Office, Bicutan, Taguig City, Metro Manila', 'Meeting with DOST officials on research funding', '19:00', 'Wilfredo Dumale Jr. and 2 university officials', 3, 'disapproved', 'No available driver or vehicle on the requested date.', pg_temp.uid(1), null),
-    (21, pg_temp.uid(5),  '2026-09-30 10:30:00+08', '2026-10-06', '2026-10-06', 'inclusive', '08:00', 'Municipal Hall, Aritao, Nueva Vizcaya', 'Meeting with municipal officials on the community outreach program', '16:00', 'Krizsha Ellaine Salinas and 3 faculty members', 4, 'disapproved', 'The vehicle needed for this trip is under maintenance on the requested date.', pg_temp.uid(2), null),
-    (22, pg_temp.uid(6),  '2026-10-02 11:15:00+08', '2026-10-09', '2026-10-09', 'inclusive', '07:30', 'Provincial Capitol, Bayombong, Nueva Vizcaya', 'Meeting with the provincial agriculture office on the farm technology program', '15:30', 'Dennis Directo and 2 faculty members', 3, 'disapproved', 'The requested date is already fully booked. Please choose another date.', pg_temp.uid(1), null),
-    (23, pg_temp.uid(4),  '2026-10-07 09:00:00+08', '2026-10-13', '2026-10-13', 'inclusive', '09:00', 'Office of the Congressman, Bayombong, Nueva Vizcaya', 'Meeting with congressman staff on the scholarship program', '16:00', 'Vernyll Jan Asis and 3 faculty members', 4, 'disapproved', 'The requested date is already fully booked. Please choose another date.', pg_temp.uid(2), null),
-    (24, pg_temp.uid(12), '2026-10-05 13:20:00+08', '2026-10-21', '2026-10-21', 'inclusive', '08:00', 'NVSU Main Campus, Bayombong, Nueva Vizcaya', 'Faculty training workshop planning', '16:00', 'Arnel Agustin and 12 faculty members', 13, 'disapproved', 'No available vehicle for this group on the requested date. The only van that can carry 13 passengers is already booked.', pg_temp.uid(1), null),
-    (25, pg_temp.uid(3),  '2026-10-02 15:10:00+08', '2026-10-07', '2026-10-07', 'inclusive', '08:00', 'NVSU Main Campus, Bayombong, Nueva Vizcaya', 'Faculty meeting on curriculum review', '17:00', 'Marife Aliaga and 4 faculty members', 5, 'disapproved', 'The vehicle needed for this trip is under maintenance on the requested date.', pg_temp.uid(2), null);
+    (18, pg_temp.uid(8), '2026-09-04 08:50:00+08', '2026-09-10', '2026-09-10', 'inclusive', '08:00', 'Provincial Capitol, Bayombong, Nueva Vizcaya', 'Meeting with provincial officials on the IT skills program', '16:00', 'Gwen Kyle Gagasa and 2 faculty members', 3, 'disapproved', 'The vehicle needed for this trip is under maintenance on the requested date.', null, pg_temp.uid(1), null),
+    (19, pg_temp.uid(5), '2026-09-11 09:10:00+08', '2026-09-17', '2026-09-17', 'inclusive', '09:00', 'NVSU Main Campus, Bayombong, Nueva Vizcaya', 'Faculty planning meeting on the research agenda', '17:00', 'Marife Aliaga and 9 faculty members', 10, 'disapproved', 'The requested date is already fully booked. Please choose another date.', null, pg_temp.uid(2), null),
+    (20, pg_temp.uid(4), '2026-09-16 14:00:00+08', '2026-09-24', '2026-09-25', 'exclusive', '05:00', 'DOST Central Office, Bicutan, Taguig City, Metro Manila', 'Meeting with DOST officials on research funding', '19:00', 'Wilfredo Dumale Jr. and 2 university officials', 3, 'disapproved', 'No available driver or vehicle on the requested date.', null, pg_temp.uid(1), null),
+    (21, pg_temp.uid(6), '2026-09-30 10:30:00+08', '2026-10-06', '2026-10-06', 'inclusive', '08:00', 'Municipal Hall, Aritao, Nueva Vizcaya', 'Meeting with municipal officials on the community outreach program', '16:00', 'Krizsha Ellaine Salinas and 3 faculty members', 4, 'disapproved', 'The vehicle needed for this trip is under maintenance on the requested date.', null, pg_temp.uid(2), null),
+    (22, pg_temp.uid(8), '2026-10-02 11:15:00+08', '2026-10-09', '2026-10-09', 'inclusive', '07:30', 'Provincial Capitol, Bayombong, Nueva Vizcaya', 'Meeting with the provincial agriculture office on the farm technology program', '15:30', 'Gwen Kyle Gagasa and 2 faculty members', 3, 'disapproved', 'The requested date is already fully booked. Please choose another date.', null, pg_temp.uid(1), null),
+    (23, pg_temp.uid(8), '2026-10-07 09:00:00+08', '2026-10-13', '2026-10-13', 'inclusive', '09:00', 'Office of the Congressman, Bayombong, Nueva Vizcaya', 'Meeting with congressman staff on the scholarship program', '16:00', 'Gwen Kyle Gagasa and 3 faculty members', 4, 'disapproved', 'The requested date is already fully booked. Please choose another date.', null, pg_temp.uid(2), null),
+    (24, pg_temp.uid(7), '2026-10-05 13:20:00+08', '2026-10-21', '2026-10-21', 'inclusive', '08:00', 'NVSU Main Campus, Bayombong, Nueva Vizcaya', 'Faculty training workshop planning', '16:00', 'Dennis Directo and 12 faculty members', 13, 'disapproved', 'No available vehicle for this group on the requested date. The only van that can carry 13 passengers is already booked.', null, pg_temp.uid(1), null),
+    (25, pg_temp.uid(5), '2026-10-02 15:10:00+08', '2026-10-07', '2026-10-07', 'inclusive', '08:00', 'NVSU Main Campus, Bayombong, Nueva Vizcaya', 'Faculty meeting on curriculum review', '17:00', 'Marife Aliaga and 4 faculty members', 5, 'disapproved', 'The vehicle needed for this trip is under maintenance on the requested date.', null, pg_temp.uid(2), null);
 
 update public.vehicle_requests set created_at = request_date;
 
--- ---------------------------------------------------------------- trips (one per approved request 1-8)
+-- ---------------------------------------------------------------- trips (one per approved request: 1-9 and 13)
 insert into public.trips (id, vehicle_request_id, vehicle_id, driver_id, trip_date, departure_time, estimated_return_time,
                           destination, purpose, trip_status, actual_departure_time, actual_return_time, actual_mileage, notes)
 values
-    (1, 1, 2, 2, '2026-09-03', '08:00', '16:00', 'NVSU Main Campus, Bayombong, Nueva Vizcaya', 'Faculty general assembly and department meeting', 'completed', '08:05', '15:40', 45, null),
-    (2, 2, 8, 4, '2026-09-08', '05:00', '20:00', 'Office of the Congressman, House of Representatives, Quezon City, Metro Manila', 'Meeting with the congressman on the university budget and infrastructure projects', 'completed', '05:10', '19:30', 690, 'Two-day trip, overnight stay in Quezon City.'),
-    (3, 3, 5, 3, '2026-09-15', '09:00', '15:00', 'Provincial Capitol, Bayombong, Nueva Vizcaya', 'Coordination meeting with provincial officials on extension programs', 'completed', '09:05', '14:20', 24, null),
-    (4, 4, 1, 1, '2026-09-22', '08:30', '17:00', 'Municipal Hall, Solano, Nueva Vizcaya', 'Meeting with municipal officials on community partnership', 'completed', '08:35', '16:40', 62, null),
-    (5, 5, 2, 2, '2026-10-12', '07:30', '16:30', 'Office of the Congressman, Bayombong, Nueva Vizcaya', 'Meeting with the congressman and staff on the scholarship program', 'in_progress', '07:35', null, null, null),
-    (6, 6, 6, 4, '2026-10-12', '08:00', '15:00', 'DepEd Schools Division Office, Bayombong, Nueva Vizcaya', 'Meeting with DepEd officials on the senior high school partnership', 'in_progress', '08:05', null, null, null),
-    (7, 7, 8, 1, '2026-10-15', '05:00', '20:00', 'Department of Budget and Management, Manila', 'Meeting with DBM officials on the proposed university budget', 'scheduled', null, null, null, 'Two-day trip, overnight stay in Manila.'),
-    (8, 8, 1, 3, '2026-10-21', '09:00', '16:00', 'NVSU Main Campus, Bayombong, Nueva Vizcaya', 'Academic council meeting of all campus faculty', 'scheduled', null, null, null, null);
+    (1,  1,  2, 2, '2026-09-03', '08:00', '16:00', 'NVSU Main Campus, Bayombong, Nueva Vizcaya', 'Faculty general assembly and department meeting', 'completed', '08:05', '15:40', 45, null),
+    (2,  2,  8, 4, '2026-09-08', '05:00', '20:00', 'Office of the Congressman, House of Representatives, Quezon City, Metro Manila', 'Meeting with the congressman on the university budget and infrastructure projects', 'completed', '05:10', '19:30', 690, 'Two-day trip, overnight stay in Quezon City.'),
+    (3,  3,  5, 3, '2026-09-15', '09:00', '15:00', 'Provincial Capitol, Bayombong, Nueva Vizcaya', 'Coordination meeting with provincial officials on extension programs', 'completed', '09:05', '14:20', 24, null),
+    (4,  4,  1, 1, '2026-09-22', '08:30', '17:00', 'Municipal Hall, Solano, Nueva Vizcaya', 'Meeting with municipal officials on community partnership', 'completed', '08:35', '16:40', 62, null),
+    (5,  5,  2, 2, '2026-10-12', '07:30', '16:30', 'Office of the Congressman, Bayombong, Nueva Vizcaya', 'Meeting with the congressman and staff on the scholarship program', 'in_progress', '07:35', null, null, null),
+    (6,  6,  6, 4, '2026-10-12', '08:00', '15:00', 'DepEd Schools Division Office, Bayombong, Nueva Vizcaya', 'Meeting with DepEd officials on the senior high school partnership', 'in_progress', '08:05', null, null, null),
+    (7,  7,  8, 1, '2026-10-15', '05:00', '20:00', 'Department of Budget and Management, Manila', 'Meeting with DBM officials on the proposed university budget', 'scheduled', null, null, null, 'Two-day trip, overnight stay in Manila.'),
+    (8,  8,  1, 3, '2026-10-21', '09:00', '16:00', 'NVSU Main Campus, Bayombong, Nueva Vizcaya', 'Academic council meeting of all campus faculty', 'scheduled', null, null, null, null),
+    (9,  9,  5, 3, '2026-10-22', '08:00', '17:00', 'Provincial Capitol, Bayombong, Nueva Vizcaya', 'Presentation of the extension program to the provincial board', 'scheduled', null, null, null, null),
+    (10, 13, 1, 1, '2026-10-20', '08:00', '17:00', 'NVSU Main Campus, Bayombong, Nueva Vizcaya', 'Department heads meeting on the second semester schedule', 'scheduled', null, null, null, null);
 
 insert into public.allocations (id, trip_id, vehicle_id, driver_id, allocated_by, allocation_date, notes)
 values
-    (1, 1, 2, 2, pg_temp.uid(1), '2026-08-31 11:00:00+08', null),
-    (2, 2, 8, 4, pg_temp.uid(2), '2026-09-04 10:30:00+08', 'Overnight stay in Quezon City.'),
-    (3, 3, 5, 3, pg_temp.uid(1), '2026-09-10 15:00:00+08', null),
-    (4, 4, 1, 1, pg_temp.uid(2), '2026-09-18 12:00:00+08', null),
-    (5, 5, 2, 2, pg_temp.uid(1), '2026-10-08 10:30:00+08', null),
-    (6, 6, 6, 4, pg_temp.uid(2), '2026-10-08 11:00:00+08', null),
-    (7, 7, 8, 1, pg_temp.uid(1), '2026-10-07 11:00:00+08', 'Overnight stay in Manila.'),
-    (8, 8, 1, 3, pg_temp.uid(2), '2026-10-09 10:00:00+08', 'Passengers will gather at the main gate.');
+    (1,  1,  2, 2, pg_temp.uid(1), '2026-08-31 11:00:00+08', null),
+    (2,  2,  8, 4, pg_temp.uid(2), '2026-09-04 10:30:00+08', 'Overnight stay in Quezon City.'),
+    (3,  3,  5, 3, pg_temp.uid(1), '2026-09-10 15:00:00+08', null),
+    (4,  4,  1, 1, pg_temp.uid(2), '2026-09-18 12:00:00+08', null),
+    (5,  5,  2, 2, pg_temp.uid(1), '2026-10-08 10:30:00+08', null),
+    (6,  6,  6, 4, pg_temp.uid(2), '2026-10-08 11:00:00+08', null),
+    (7,  7,  8, 1, pg_temp.uid(1), '2026-10-07 11:00:00+08', 'Overnight stay in Manila.'),
+    (8,  8,  1, 3, pg_temp.uid(2), '2026-10-09 10:00:00+08', 'Passengers will gather at the main gate.'),
+    (9,  9,  5, 3, pg_temp.uid(1), '2026-10-09 16:30:00+08', null),
+    (10, 10, 1, 1, pg_temp.uid(2), '2026-10-13 09:30:00+08', null);
+
+-- ---------------------------------------------------------------- date change requests (1 pending, 2 approved, 3 disapproved)
+insert into public.reschedule_requests (id, trip_id, requested_by, old_date, new_date, reason, status,
+                                        handled_by, admin_reason, handled_at)
+values
+    (1, 8,  pg_temp.uid(8), '2026-10-21', '2026-10-23', 'The academic council meeting was moved to a later date.',      'pending',     null,           null,                                                                       null),
+    (2, 9,  pg_temp.uid(7), '2026-10-21', '2026-10-22', 'The provincial board moved the presentation to the next day.', 'approved',    pg_temp.uid(1), 'Approved. The vehicle and driver are free on the new date.',               '2026-10-12 14:00:00+08'),
+    (3, 10, pg_temp.uid(5), '2026-10-20', '2026-10-21', 'The department heads asked to move the meeting by one day.',   'disapproved', pg_temp.uid(2), 'The only vehicle that fits this group is already booked on the new date.', '2026-10-14 11:00:00+08');
 
 -- ---------------------------------------------------------------- maintenance
 -- The sync trigger is off while seeding, so the vehicle dates above stay exactly as written.
@@ -215,7 +225,7 @@ declare
     t text;
 begin
     foreach t in array array[
-        'vehicles', 'drivers', 'vehicle_requests', 'trips', 'allocations', 'vehicle_maintenance',
+        'vehicles', 'drivers', 'vehicle_requests', 'trips', 'allocations', 'reschedule_requests', 'vehicle_maintenance',
         'post_travel_reports', 'fuel_usage_records', 'preventive_maintenance_checklists'
     ] loop
         execute format(
@@ -229,8 +239,8 @@ insert into auth.users (
     raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
     confirmation_token, email_change, email_change_token_new, recovery_token
 ) values (
-    '00000000-0000-0000-0000-000000000000', pg_temp.uid(13), 'authenticated', 'authenticated',
-    'reonel.makil@nvsu.edu.ph', extensions.crypt('password', extensions.gen_salt('bf')), now(),
+    '00000000-0000-0000-0000-000000000000', pg_temp.uid(3), 'authenticated', 'authenticated',
+    'staff1@nvsu.edu.ph', extensions.crypt('password', extensions.gen_salt('bf')), now(),
     jsonb_build_object('provider', 'email', 'providers', jsonb_build_array('email'), 'role', 'staff'),
     jsonb_build_object('first_name', 'Reonel', 'last_name', 'Makil',
                        'position', 'Motorpool Staff', 'phone_number', '09171234502'),
@@ -242,4 +252,4 @@ select gen_random_uuid(), id,
        jsonb_build_object('sub', id::text, 'email', email, 'email_verified', true),
        'email', id::text, now(), now(), now()
 from auth.users
-where email = 'reonel.makil@nvsu.edu.ph';
+where email = 'staff1@nvsu.edu.ph';

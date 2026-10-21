@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { supabase } from '@/lib/supabase'
+import { supabase, markSessionStart, sessionExpired, signOutLocal } from '@/lib/supabase'
 import { httpError } from '@/lib/api'
 
 // The profile row (role, name, is_active) of an auth user.
@@ -26,6 +26,10 @@ export const useAuthStore = defineStore('auth', {
   actions: {
     // The session (tokens) is kept by supabase-js. The store keeps the profile.
     async login({ email, password, role }) {
+      // A repeat login in this tab replaces this tab's session only.
+      // Other tabs and devices stay signed in.
+      await signOutLocal()
+
       const { data, error } = await supabase.auth.signInWithPassword({
         email: String(email ?? '').trim(),
         password,
@@ -53,18 +57,19 @@ export const useAuthStore = defineStore('auth', {
       }
 
       if (!profile || !profile.is_active) {
-        await supabase.auth.signOut()
+        await signOutLocal()
         const message = 'This account is not active. Please contact an administrator.'
         throw httpError(422, message, { email: [message] })
       }
 
       // The account type chosen on the login page must match the role of the account.
       if (role && profile.role !== role) {
-        await supabase.auth.signOut()
+        await signOutLocal()
         const message = 'The selected account type does not match your account.'
         throw httpError(422, message, { role: [message] })
       }
 
+      markSessionStart()
       this.user = profile
       this.ready = true
       return this.user
@@ -79,10 +84,17 @@ export const useAuthStore = defineStore('auth', {
           return null
         }
 
+        // The 8-hour limit has passed: end this session.
+        if (sessionExpired()) {
+          await signOutLocal()
+          this.user = null
+          return null
+        }
+
         const profile = await loadProfile(data.session.user.id)
 
         if (!profile || !profile.is_active) {
-          await supabase.auth.signOut()
+          await signOutLocal()
           this.user = null
         } else {
           this.user = profile
@@ -96,9 +108,21 @@ export const useAuthStore = defineStore('auth', {
       return this.user
     },
 
+    // Used by the router on every page change. Returns false when the session has ended.
+    async checkSession() {
+      if (!this.user) return false
+
+      if (sessionExpired()) {
+        await this.logout()
+        return false
+      }
+
+      return true
+    },
+
     async logout() {
       try {
-        await supabase.auth.signOut()
+        await signOutLocal()
       } catch {
         // the session may already be invalid: clear locally regardless
       }

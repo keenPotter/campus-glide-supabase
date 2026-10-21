@@ -109,6 +109,11 @@ router.beforeEach(async (to) => {
     await auth.fetchUser()
   }
 
+   // The 8-hour login has ended: sign out and go to the login page.
+  if (auth.isAuthenticated && !(await auth.checkSession())) {
+    return { name: 'login', query: { redirect: to.fullPath } }
+  }
+
   if (to.meta.requiresAuth && !auth.isAuthenticated) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
