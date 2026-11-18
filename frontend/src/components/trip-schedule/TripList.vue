@@ -17,6 +17,7 @@ defineProps({
   subtitle: { type: String, default: '' },
   emptyMessage: { type: String, default: 'No scheduled trips found.' },
   trips: { type: Array, required: true },
+  totalCount: { type: Number, default: null },
   isNewTrip: { type: Function, required: true },
 })
 
@@ -29,9 +30,13 @@ defineEmits(['open-trip'])
       <span
         class="inline-flex h-7 min-w-8 items-center justify-center rounded-full bg-primary-50 px-2.5 text-small font-semibold text-primary-700"
       >
-        {{ trips.length }}
+        {{ totalCount ?? trips.length }}
       </span>
     </template>
+
+    <div v-if="$slots.controls" class="border-b border-line px-card py-3">
+      <slot name="controls" />
+    </div>
 
     <EmptyState v-if="!trips.length" title="No scheduled trips" :message="emptyMessage" />
 

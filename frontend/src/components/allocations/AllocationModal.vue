@@ -2,7 +2,13 @@
 import { computed, reactive, ref, watch } from 'vue'
 import api, { errorMessage, unwrap, validationErrors } from '@/lib/api'
 import { todayIso } from '@/lib/format'
-import { availabilityOptions, conflictOf, shiftedRange } from '@/lib/allocations'
+import {
+  availabilityOptions,
+  conflictOf,
+  seatingCapacityWarning,
+  shiftedRange,
+  vehicleAvailabilityOptions,
+} from '@/lib/allocations'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
@@ -74,14 +80,23 @@ const requestOptions = computed(() => {
 
 // The current vehicle or driver is always in the list.
 const vehicleOptions = computed(() => {
-  const options = availabilityOptions(vehicleItems.value)
+  const options = vehicleAvailabilityOptions(vehicleItems.value)
   const current = props.allocation?.vehicle
 
   if (current?.id && !options.some((item) => item.value === current.id)) {
-    options.unshift({ value: current.id, label: `${current.plate_number} — ${current.vehicle_model}` })
+    options.unshift(...vehicleAvailabilityOptions([{ ...current, available: true }]))
   }
 
   return options
+})
+
+const capacityWarning = computed(() => {
+  const vehicle = vehicleItems.value.find((item) => String(item.id) === String(form.vehicle_id))
+    ?? props.allocation?.vehicle
+  const passengerCount = props.allocation?.vehicle_request?.passenger_count
+    ?? props.allocation?.vehicle_request?.number_of_passengers
+
+  return seatingCapacityWarning(passengerCount, vehicle?.capacity)
 })
 
 const driverOptions = computed(() => {
@@ -112,7 +127,13 @@ async function loadOptions() {
   try {
     const data = unwrap(
       await api.get('/allocation-options', {
-        params: { start_date: range.start, end_date: range.end, ignore_trip_id: current.trip.id },
+        params: {
+          start_date: range.start,
+          end_date: range.end,
+          start_time: String(current.trip.departure_time || '').slice(0, 5),
+          end_time: String(current.trip.estimated_return_time || '').slice(0, 5),
+          ignore_trip_id: current.trip.id,
+        },
       }),
     )
     vehicleItems.value = data.vehicles
@@ -241,6 +262,14 @@ function closeConflict() {
         :error="errors.vehicle_id"
         required
       />
+
+      <p
+        v-if="capacityWarning"
+        role="status"
+        class="rounded-card border-l-4 border-amber-400 bg-amber-50 p-3 text-small text-amber-900"
+      >
+        {{ capacityWarning }}
+      </p>
 
       <BaseSelect
         v-model="form.driver_id"

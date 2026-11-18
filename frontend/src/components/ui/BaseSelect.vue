@@ -14,7 +14,7 @@ defineEmits(['update:modelValue'])
 </script>
 
 <template>
-  <div>
+  <div class="min-w-0">
     <label v-if="label" class="field-label">
       {{ label }}
       <span v-if="required" class="text-red-500">*</span>
@@ -23,6 +23,7 @@ defineEmits(['update:modelValue'])
     <select
       :value="modelValue"
       :disabled="disabled"
+      :required="required"
       class="field-control appearance-none bg-[length:16px] bg-[right_12px_center] bg-no-repeat pr-10"
       style="background-image: url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%236b7280%22 stroke-width=%222%22><path d=%22M6 9l6 6 6-6%22/></svg>')"
       :class="{ 'field-error': error }"

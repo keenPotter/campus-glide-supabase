@@ -51,13 +51,30 @@
 }
 
 @layer base {
+  html {
+    min-width: 320px;
+  }
+
   body {
     @apply bg-surface text-body text-ink antialiased;
     font-family: var(--font-sans);
+    min-width: 320px;
+    min-height: 100vh;
+  }
+
+  #app {
+    min-height: 100vh;
+    min-height: 100dvh;
   }
 
   h1 { @apply text-page-title; }
   h2 { @apply text-section-title; }
+
+  input,
+  select,
+  textarea {
+    min-width: 0;
+  }
 
   *:focus-visible {
     @apply outline-none ring-2 ring-primary-400 ring-offset-2 ring-offset-white;
@@ -93,7 +110,11 @@
   }
 
   .table-head {
-    @apply bg-neutral-50 text-left text-small font-semibold uppercase tracking-wide text-ink-muted;
+    @apply border-b border-line bg-neutral-50 text-left text-small font-semibold uppercase tracking-wide text-ink-muted;
+  }
+
+  .table-row-interactive {
+    @apply cursor-pointer transition-colors duration-150 hover:bg-neutral-50 focus-visible:bg-neutral-50;
   }
 
   /* Mobile-friendly card view for tables */
@@ -125,5 +146,39 @@
   /* Mobile-first stat card */
   .stat-card {
     @apply rounded-card border border-line bg-white p-card shadow-sm;
+  }
+
+  .page-header {
+    @apply flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between;
+  }
+
+  .page-header-copy {
+    @apply min-w-0;
+  }
+
+  .page-actions {
+    @apply flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end;
+  }
+
+  .page-actions > * {
+    @apply min-w-0 flex-1 sm:flex-none;
+  }
+}
+
+/* Consistent feedback for interactive controls throughout CampusGlide. */
+@layer base {
+  button:not(:disabled), [role="button"], summary, select, input[type="checkbox"], input[type="radio"] {
+    cursor: pointer;
+  }
+  button:not(:disabled), [role="button"], a, summary, select {
+    transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+  }
+  button:not(:disabled):hover { filter: brightness(0.97); }
+  button:disabled { cursor: not-allowed; opacity: .6; }
+  a:hover { text-decoration-color: currentColor; }
+  input:not(:disabled), textarea:not(:disabled), select:not(:disabled) { transition: border-color 160ms ease, box-shadow 160ms ease; }
+  input:not(:disabled):hover, textarea:not(:disabled):hover, select:not(:disabled):hover { border-color: #7fd689; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
   }
 }

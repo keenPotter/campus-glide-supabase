@@ -25,9 +25,9 @@ const emit = defineEmits(['close'])
           class="max-h-[90vh] w-full overflow-y-auto rounded-t-card bg-white shadow-pop sm:max-w-lg sm:rounded-card"
         >
           <header class="flex items-start justify-between gap-4 border-b border-line px-card py-card">
-            <div>
-              <h2 class="text-section-title">{{ title }}</h2>
-              <p v-if="subtitle" class="mt-0.5 text-small text-ink-muted">{{ subtitle }}</p>
+            <div class="min-w-0">
+              <h2 class="break-words text-section-title">{{ title }}</h2>
+              <p v-if="subtitle" class="mt-0.5 break-words text-small text-ink-muted">{{ subtitle }}</p>
             </div>
             <button
               type="button"
@@ -41,11 +41,11 @@ const emit = defineEmits(['close'])
             </button>
           </header>
 
-          <div class="p-card">
+          <div class="modal-body p-card">
             <slot />
           </div>
 
-          <footer v-if="$slots.footer" class="flex justify-end gap-3 border-t border-line px-card py-card">
+          <footer v-if="$slots.footer" class="modal-footer flex flex-wrap justify-end gap-3 border-t border-line px-card py-card">
             <slot name="footer" />
           </footer>
         </div>
@@ -53,3 +53,14 @@ const emit = defineEmits(['close'])
     </Transition>
   </Teleport>
 </template>
+
+<style scoped>
+.modal-body :deep(button),
+.modal-footer :deep(button) {
+  height: 2rem;
+  padding-right: 0.5rem;
+  padding-left: 0.5rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+</style>

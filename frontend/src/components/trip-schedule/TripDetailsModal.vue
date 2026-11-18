@@ -52,7 +52,9 @@ defineEmits(['close', 'select-trip'])
             class="h-2 w-2 shrink-0 rounded-full bg-red-500"
             aria-label="Unviewed trip"
           />
-          <span class="text-ink-muted">›</span>
+          <svg class="h-4 w-4 shrink-0 text-ink-muted transition-transform duration-200" :class="item.id === trip.id ? 'rotate-90' : ''" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="m7 4 6 6-6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
         </button>
       </div>
 

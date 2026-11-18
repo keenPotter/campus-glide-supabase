@@ -27,7 +27,6 @@ const navigation = computed(() => {
         also: ['requests.show', 'requests.edit'],
       },
       { name: 'New Request', to: { name: 'requests.create' }, icon: 'plus' },
-      { name: 'My Allocations', to: { name: 'allocations' }, icon: 'car' },
       {
         name: 'My Trip Schedule',
         to: { name: 'facultyTripSchedule' },
@@ -64,13 +63,8 @@ const navigation = computed(() => {
         icon: 'wrench',
         badge: notifications.openMaintenance,
       },
-      {
-        name: 'Preventive Maintenance',
-        to: { name: 'preventiveMaintenance' },
-        icon: 'wrench',
-      },
       { name: 'Users', to: { name: 'users.index' }, icon: 'users' },
-      { name: 'Create User', to: { name: 'users.create' }, icon: 'user-plus' },
+      { name: 'Audit Log', to: { name: 'auditLogs' }, icon: 'shield' },
     )
   }
 
@@ -87,6 +81,7 @@ const icons = {
   wrench: 'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94z',
   'user-plus': 'M15 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM19 8v6M16 11h6',
   users: 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
+  shield: 'M12 3 4 6v5c0 5 3.4 8.5 8 10 4.6-1.5 8-5 8-10V6l-8-3zM9 12l2 2 4-4',
 }
 
 function isActive(item) {
@@ -126,9 +121,12 @@ function closeSidebar() {
       <button
         type="button"
         class="relative rounded-card p-2 text-ink-muted hover:bg-neutral-100"
+        :aria-label="sidebarOpen ? 'Close navigation menu' : 'Open navigation menu'"
+        :aria-expanded="sidebarOpen"
+        aria-controls="primary-navigation"
         @click="sidebarOpen = !sidebarOpen"
       >
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M4 6h16M4 12h16M4 18h16" />
         </svg>
         <!-- Dot: something needs attention inside the menu -->
@@ -138,11 +136,13 @@ function closeSidebar() {
         />
       </button>
 
-      <div class="flex h-8 w-8 items-center justify-center rounded-card bg-primary text-white text-small font-semibold">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M3 17V9l2-4h9l3 4h4v8" />
-        </svg>
-      </div>
+      <img
+        src="/icon-192x192.png"
+        srcset="/icon-192x192.png 192w, /icon-512x512.png 512w"
+        sizes="2rem"
+        alt="CampusGlide logo"
+        class="h-8 w-8 shrink-0 object-contain"
+      />
 
       <button
         type="button"
@@ -172,15 +172,18 @@ function closeSidebar() {
 
     <!-- Sidebar (always visible on laptop and up) -->
     <aside
-      class="fixed inset-y-0 left-0 z-40 w-64 border-r border-line bg-white transition-transform"
+      id="primary-navigation"
+      class="fixed inset-y-0 left-0 z-40 w-64 overflow-y-auto overscroll-contain border-r border-line bg-white transition-transform"
       :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'"
     >
       <div class="flex h-16 items-center gap-2 border-b border-line px-card">
-        <div class="flex h-8 w-8 items-center justify-center rounded-card bg-primary text-white">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M3 17V9l2-4h9l3 4h4v8" />
-          </svg>
-        </div>
+        <img
+          src="/icon-192x192.png"
+          srcset="/icon-192x192.png 192w, /icon-512x512.png 512w"
+          sizes="2rem"
+          alt="CampusGlide logo"
+          class="h-8 w-8 shrink-0 object-contain"
+        />
         <div>
           <p class="text-small font-semibold leading-tight">CampusGlide</p>
           <p class="text-xs text-ink-muted">NVSU Motorpool</p>
@@ -217,7 +220,7 @@ function closeSidebar() {
     </aside>
 
     <!-- Main Content -->
-    <div class="lg:pl-64">
+    <div class="min-w-0 lg:pl-64">
       <!-- Desktop Header -->
       <header class="sticky top-0 z-20 hidden lg:flex h-16 items-center justify-between gap-4 border-b border-line bg-white px-page">
         <div class="ml-auto flex items-center gap-3">
@@ -241,7 +244,7 @@ function closeSidebar() {
         </div>
       </header>
 
-      <main class="p-page pb-20 lg:pb-page">
+      <main class="min-w-0 p-page pb-20 lg:pb-page">
         <slot />
       </main>
     </div>

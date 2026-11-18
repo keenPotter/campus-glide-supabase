@@ -1,828 +1,234 @@
-import { supabase, signOutLocal, sessionExpired } from "@/lib/supabase";
-import { checklistHtml, vehicleRequestHtml } from "@/lib/printTemplates";
+import { supabase } from '@/lib/supabase'
+import { buildAllocationFormHtml, buildChecklistHtml } from '@/lib/printForms'
 
 /**
- * Data layer. The components still call `api.get('/allocations')`, `api.post(...)` and so on,
- * but the calls are answered by Supabase (tables, RPC functions and the register-user function)
- * instead of the Laravel API. Responses and errors keep the axios shape the components expect:
- *   success -> { data }          (list endpoints return { data: [...] }, as Laravel resources did)
- *   failure -> error.response = { status, data: { message, errors?, conflict?, conflicts? } }
+ * Keeps the old api.get / api.post / api.put / api.patch / api.delete calls working,
+ * but sends them to Supabase instead of the Laravel server.
+ * Every route below points to one SQL function (api_*) or to the admin-users Edge Function.
+ * Responses and errors have the same shape as before, so the pages do not change.
  */
 
-/* ================= HELPERS USED BY THE COMPONENTS ================= */
+function clean(object = {}) {
+  return Object.fromEntries(
+    Object.entries(object).filter(([, value]) => value !== undefined && value !== null && value !== ''),
+  )
+}
 
-/** Resources are wrapped in `data`; plain payloads are not. */
-export function unwrap(response) {
-  const payload = response?.data;
-  if (
-    payload &&
-    typeof payload === "object" &&
-    "data" in payload &&
-    !Array.isArray(payload)
-  ) {
-    return payload.data;
+function fail(status, body) {
+  const error = new Error(body?.message ?? 'Request failed')
+  error.response = { status, data: body }
+  return error
+}
+
+function fromRpcError(error) {
+  try {
+    const body = JSON.parse(error.message)
+    if (body?.status) return fail(body.status, body)
+  } catch {
+    // not one of our own errors
   }
-  return payload;
+
+  const expired = error.code === 'PGRST301' || /jwt/i.test(error.message ?? '')
+  return fail(expired ? 401 : 500, {
+    message: expired ? 'Unauthenticated.' : error.message || 'Something went wrong. Please try again.',
+  })
+}
+
+async function rpc(name, args = {}) {
+  const { data, error } = await supabase.rpc(name, args)
+  if (error) throw fromRpcError(error)
+  return data
+}
+
+async function invokeUsers(payload) {
+  const { data, error } = await supabase.functions.invoke('admin-users', { body: payload })
+  if (error) {
+    let status = 500
+    let body = { message: error.message }
+    try {
+      status = error.context.status
+      body = await error.context.json()
+    } catch {
+      // keep the default message
+    }
+    throw fail(status, body)
+  }
+  return data
+}
+
+async function onUnauthenticated() {
+  await supabase.auth.signOut({ scope: 'local' })
+  if (!window.location.pathname.startsWith('/login')) {
+    window.location.assign('/login')
+  }
+}
+
+const num = (value) => Number(value)
+
+/* ================= routes ================= */
+
+const routes = [
+  // ----- session -----
+  [
+    'POST',
+    /^\/login$/,
+    async ({ body }) => {
+      const email = String(body.email ?? '').trim().toLowerCase()
+      const wrong = (field, message) => fail(422, { message, errors: { [field]: [message] } })
+
+      const check = await rpc('api_login_precheck', { p_email: email })
+      if (!check?.found) throw wrong('email', 'The provided email address is incorrect.')
+
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password: body.password })
+      if (error) throw wrong('password', 'The provided password is incorrect.')
+
+      const me = (await rpc('api_me')).data
+      if (!me.is_active) {
+        await supabase.auth.signOut({ scope: 'local' })
+        throw wrong('email', 'This account has been deactivated.')
+      }
+      if (me.role !== body.role) {
+        await supabase.auth.signOut({ scope: 'local' })
+        throw wrong('role', 'The selected account type does not match this account.')
+      }
+
+      await rpc('api_log_auth', { p_action: 'LOGIN' })
+      return { token: data.session.access_token, user: me }
+    },
+  ],
+  ['GET', /^\/user$/, () => rpc('api_me')],
+  [
+    'POST',
+    /^\/logout$/,
+    async () => {
+      try {
+        await rpc('api_log_auth', { p_action: 'LOGOUT' })
+      } finally {
+        await supabase.auth.signOut({ scope: 'local' })
+      }
+      return ''
+    },
+  ],
+  ['GET', /^\/notifications\/summary$/, () => rpc('api_notifications_summary')],
+
+  // ----- vehicle requests -----
+  ['GET', /^\/vehicle-requests$/, ({ params }) => rpc('api_vehicle_requests_list', { p_params: params })],
+  ['POST', /^\/vehicle-requests$/, ({ body }) => rpc('api_vehicle_request_create', { p_body: body })],
+  ['POST', /^\/vehicle-requests\/on-site$/, ({ body }) => rpc('api_vehicle_request_create_on_site', { p_body: body })],
+  ['GET', /^\/vehicle-requests\/(\d+)$/, ({ id }) => rpc('api_vehicle_request_show', { p_id: num(id) })],
+  ['PUT', /^\/vehicle-requests\/(\d+)\/edit$/, ({ id, body }) => rpc('api_vehicle_request_edit', { p_id: num(id), p_body: body })],
+  ['PATCH', /^\/vehicle-requests\/(\d+)\/status$/, ({ id, body }) => rpc('api_vehicle_request_status', { p_id: num(id), p_body: body })],
+
+  // ----- allocations -----
+  ['GET', /^\/allocation-options$/, ({ params }) => rpc('api_allocation_options', { p_params: params })],
+  ['GET', /^\/allocations$/, ({ params }) => rpc('api_allocations_list', { p_params: params })],
+  ['POST', /^\/allocations$/, ({ body }) => rpc('api_allocation_store', { p_body: body })],
+  ['PUT', /^\/allocations\/(\d+)$/, ({ id, body }) => rpc('api_allocation_update', { p_id: num(id), p_body: body })],
+  ['POST', /^\/allocations\/(\d+)\/cancel$/, ({ id, body }) => rpc('api_allocation_cancel', { p_id: num(id), p_body: body })],
+  [
+    'GET',
+    /^\/allocations\/(\d+)\/print$/,
+    async ({ id }) => buildAllocationFormHtml(await rpc('api_allocation_print_data', { p_id: num(id) })),
+  ],
+  ['POST', /^\/allocation-drivers$/, ({ body }) => rpc('api_create_driver', { p_body: body })],
+  ['POST', /^\/allocation-vehicles$/, ({ body }) => rpc('api_create_vehicle', { p_body: body })],
+
+  // ----- date changes -----
+  ['GET', /^\/reschedule-requests$/, ({ params }) => rpc('api_reschedule_list', { p_params: params })],
+  ['POST', /^\/allocations\/(\d+)\/reschedule-requests$/, ({ id, body }) => rpc('api_reschedule_request_create', { p_allocation: num(id), p_body: body })],
+  ['POST', /^\/allocations\/(\d+)\/reschedule$/, ({ id, body }) => rpc('api_reschedule_direct', { p_allocation: num(id), p_body: body })],
+  ['POST', /^\/reschedule-requests\/(\d+)\/approve$/, ({ id, body }) => rpc('api_reschedule_approve', { p_id: num(id), p_body: body })],
+  ['POST', /^\/reschedule-requests\/(\d+)\/disapprove$/, ({ id, body }) => rpc('api_reschedule_disapprove', { p_id: num(id), p_body: body })],
+
+  // ----- sending a trip request to another administrator -----
+  ['GET', /^\/admins$/, () => rpc('api_admins')],
+  ['GET', /^\/trip-request-shares$/, () => rpc('api_trip_shares_list')],
+  ['POST', /^\/trip-request-shares$/, ({ body }) => rpc('api_trip_share_create', { p_body: body })],
+
+  // ----- trips and vehicles -----
+  ['GET', /^\/trips$/, ({ params }) => rpc('api_trips_list', { p_params: params })],
+  ['GET', /^\/my-trips$/, ({ params }) => rpc('api_my_trips', { p_params: params })],
+  ['GET', /^\/trip-views$/, () => rpc('api_trip_views_list')],
+  ['POST', /^\/trips\/(\d+)\/view$/, ({ id }) => rpc('api_trip_view_store', { p_trip: num(id) })],
+  ['GET', /^\/vehicles$/, () => rpc('api_vehicles_list')],
+
+  // ----- users -----
+  ['GET', /^\/users$/, ({ params }) => rpc('api_users_list', { p_params: params })],
+  ['POST', /^\/register$/, ({ body }) => invokeUsers({ action: 'register', data: body })],
+  ['POST', /^\/admin-transfer$/, ({ body }) => invokeUsers({ action: 'transfer', data: body })],
+  ['PUT', /^\/users\/(\d+)$/, ({ id, body }) => invokeUsers({ action: 'update', id: num(id), data: body })],
+  ['DELETE', /^\/users\/(\d+)$/, ({ id }) => rpc('api_user_request_deletion', { p_id: num(id) })],
+  ['POST', /^\/users\/(\d+)\/cancel-deletion$/, ({ id }) => rpc('api_user_cancel_deletion', { p_id: num(id) })],
+
+  // ----- audit log -----
+  ['GET', /^\/audit-logs$/, ({ params }) => rpc('api_audit_logs', { p_params: params })],
+
+  // ----- maintenance -----
+  ['GET', /^\/maintenance-logs$/, ({ params }) => rpc('api_maintenance_list', { p_params: params })],
+  ['POST', /^\/maintenance-logs$/, ({ body }) => rpc('api_maintenance_create', { p_body: body })],
+  ['PATCH', /^\/maintenance-logs\/(\d+)$/, ({ id, body }) => rpc('api_maintenance_update', { p_id: num(id), p_body: body })],
+  ['GET', /^\/preventive-maintenance-checklists$/, ({ params }) => rpc('api_checklists_list', { p_params: params })],
+  ['POST', /^\/preventive-maintenance-checklists$/, ({ body }) => rpc('api_checklist_create', { p_body: body })],
+  [
+    'GET',
+    /^\/preventive-maintenance-checklists\/(\d+)\/print$/,
+    async ({ id }) => buildChecklistHtml(await rpc('api_checklist_print_data', { p_id: num(id) })),
+  ],
+]
+
+async function request(method, path, { params, data } = {}) {
+  const url = path.split('?')[0]
+
+  for (const [routeMethod, pattern, handler] of routes) {
+    if (routeMethod !== method) continue
+
+    const match = url.match(pattern)
+    if (!match) continue
+
+    try {
+      const body = await handler({ id: match[1], params: clean(params), body: data ?? {} })
+      return { data: body, status: 200 }
+    } catch (error) {
+      if (error?.response?.status === 401) await onUnauthenticated()
+      throw error
+    }
+  }
+
+  throw fail(404, { message: 'That endpoint does not exist.' })
+}
+
+const api = {
+  get: (path, config = {}) => request('GET', path, config),
+  post: (path, data, config = {}) => request('POST', path, { ...config, data }),
+  put: (path, data, config = {}) => request('PUT', path, { ...config, data }),
+  patch: (path, data, config = {}) => request('PATCH', path, { ...config, data }),
+  delete: (path, config = {}) => request('DELETE', path, config),
+}
+
+/**
+ * Laravel wraps top-level JsonResource responses in `data`, but nested
+ * resources (e.g. login's `user` key) and plain json() payloads are not.
+ */
+export function unwrap(response) {
+  const payload = response?.data
+  if (payload && typeof payload === 'object' && 'data' in payload && !Array.isArray(payload)) {
+    return payload.data
+  }
+  return payload
 }
 
 /** Turns a 422 response into a { field: 'first message' } map. */
 export function validationErrors(error) {
-  const errors = error?.response?.data?.errors;
-  if (!errors) return {};
+  const errors = error?.response?.data?.errors
+  if (!errors) return {}
 
   return Object.fromEntries(
-    Object.entries(errors).map(([field, messages]) => [
-      field,
-      Array.isArray(messages) ? messages[0] : messages,
-    ]),
-  );
+    Object.entries(errors).map(([field, messages]) => [field, messages[0]]),
+  )
 }
 
-export function errorMessage(
-  error,
-  fallback = "Something went wrong. Please try again.",
-) {
-  return error?.response?.data?.message ?? fallback;
+export function errorMessage(error, fallback = 'Something went wrong. Please try again.') {
+  return error?.response?.data?.message ?? fallback
 }
 
-/** Builds an error in the shape the components read. `errors` is { field: [message] }. */
-export function httpError(status, message, errors) {
-  const error = new Error(message);
-  error.response = { status, data: { message, ...(errors ? { errors } : {}) } };
-  return error;
-}
-
-/* ================= ERROR CONVERSION ================= */
-
-// PostgREST turns SQLSTATE 'PTnnn' into HTTP status nnn. `details` holds the JSON the SQL
-// functions put in `detail` ({ errors, conflict, conflicts }).
-function toApiError(error, status) {
-  const pt = /^PT(\d{3})$/.exec(error?.code ?? "");
-
-  // No HTTP status: the network failed. Let the component show its own fallback message.
-  if (!status && !pt) return new Error(error?.message || "Network error");
-
-  let extra = {};
-  if (error.details) {
-    try {
-      const parsed = JSON.parse(error.details);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
-        extra = parsed;
-    } catch {
-      // `details` is plain text: ignore it
-    }
-  }
-
-  const code = status || Number(pt[1]);
-
-  // Expired or invalid session: sign out. main.js sends the user to /login.
-  if (code === 401) signOutLocal();
-
-  const result = new Error(error.message);
-  result.response = {
-    status: code,
-    data: { message: error.message, ...extra },
-  };
-  return result;
-}
-
-function check({ data, error, status }) {
-  if (error) throw toApiError(error, status);
-  return data;
-}
-
-async function rpc(fn, args) {
-  return check(await supabase.rpc(fn, args));
-}
-
-async function functionsError(error) {
-  const response = error?.context;
-  if (!response || typeof response.status !== "number")
-    return new Error(error?.message || "Network error");
-
-  let body = {};
-  try {
-    body = await response.json();
-  } catch {
-    // not JSON
-  }
-
-  if (response.status === 401) signOutLocal();
-  return httpError(response.status, body.message ?? error.message, body.errors);
-}
-
-/* ================= ROW SHAPES ================= */
-
-const PAGE_SIZE = 10;
-
-const REQUESTER =
-  "requester:profiles!requester_id(id, first_name, last_name, full_name)";
-const TRIP_REQUEST = `*, vehicle_request:vehicle_requests!vehicle_request_id(*, ${REQUESTER})`;
-const TRIP_SELECT = `${TRIP_REQUEST}, vehicle:vehicles!vehicle_id(*), driver:drivers!driver_id(*)`;
-const ALLOCATION_SELECT = `*, trip:trips!trip_id(${TRIP_REQUEST}), vehicle:vehicles!vehicle_id(*), driver:drivers!driver_id(*)`;
-const REQUEST_SELECT =
-  "*, requested_by:profiles!requester_id(id, first_name, last_name, full_name, email, position)";
-const LOG_SELECT =
-  "*, vehicle:vehicles!vehicle_id(id, plate_number, vehicle_model, mileage)";
-
-const personName = (person) =>
-  person?.full_name ||
-  [person?.first_name, person?.last_name].filter(Boolean).join(" ") ||
-  null;
-
-// A driver is a record only. The components read `name`.
-function toDriver(driver) {
-  return driver ? { ...driver, name: personName(driver) } : null;
-}
-
-function toTrip(trip) {
-  return { ...trip, driver: toDriver(trip.driver) };
-}
-
-// The shape the allocation pages use: the trip status is the allocation `status`,
-// and the end date of the trip comes from its vehicle request.
-function toAllocation(row) {
-  if (!row) return null;
-
-  const trip = row.trip;
-  const request = trip?.vehicle_request;
-
-  return {
-    id: row.id,
-    trip_id: row.trip_id,
-    status: trip?.trip_status ?? "scheduled",
-    notes: row.notes,
-    allocation_date: row.allocation_date,
-    trip: trip
-      ? {
-          id: trip.id,
-          trip_date: trip.trip_date,
-          trip_end_date: request?.trip_end_date ?? trip.trip_date,
-          departure_time: trip.departure_time,
-          estimated_return_time: trip.estimated_return_time,
-          destination: trip.destination,
-          purpose: trip.purpose,
-          trip_status: trip.trip_status,
-        }
-      : null,
-    vehicle_request: request
-      ? {
-          id: request.id,
-          status: request.status,
-          trip_type: request.trip_type,
-          trip_date: request.trip_date,
-          trip_end_date: request.trip_end_date,
-          number_of_passengers: request.number_of_passengers,
-          requester: personName(request.requester),
-        }
-      : null,
-    vehicle: row.vehicle,
-    driver: toDriver(row.driver),
-  };
-}
-
-// `requested_by` is the person (first_name / last_name). `return_time` is the old API name.
-function toRequest(row, requester) {
-  return {
-    ...row,
-    requested_by: requester ?? row.requested_by ?? null,
-    return_time: row.estimated_return_time,
-  };
-}
-
-const one = (value) => (Array.isArray(value) ? value[0] : value);
-
-// API names `type` and `date_performed` are the columns maintenance_type and maintenance_date.
-const LOG_COLUMNS = {
-  type: "maintenance_type",
-  date_performed: "maintenance_date",
-};
-
-const toLog = (row) => ({
-  ...row,
-  type: row.maintenance_type,
-  date_performed: row.maintenance_date,
-});
-
-function toLogColumns(body) {
-  return Object.fromEntries(
-    Object.entries(body ?? {})
-      .filter(([, value]) => value !== undefined)
-      .map(([key, value]) => [LOG_COLUMNS[key] ?? key, value]),
-  );
-}
-
-// Marks finished trips as completed and frees their vehicle and driver.
-// Called before listing trips and allocations. A failure here must not break the page.
-async function completeFinishedTrips() {
-  try {
-    await supabase.rpc("complete_finished_trips");
-  } catch {
-    // ignore
-  }
-}
-
-// Same checks as the Laravel form request, so the form shows field errors.
-function validateRequestBody(b) {
-  const errors = {};
-  const need = (field, label) => {
-    if (
-      b[field] === undefined ||
-      b[field] === null ||
-      String(b[field]).trim() === ""
-    ) {
-      errors[field] = [`The ${label} field is required.`];
-    }
-  };
-
-  need("destination", "destination");
-  need("purpose", "purpose");
-  need("trip_date", "trip date");
-  need("trip_end_date", "trip end date");
-  need("departure_time", "departure time");
-  need("estimated_return_time", "estimated return time");
-  need("passengers", "passengers");
-
-  if (!["inclusive", "exclusive"].includes(b.trip_type)) {
-    errors.trip_type = ["The selected trip type is invalid."];
-  }
-  if (
-    !errors.trip_date &&
-    !errors.trip_end_date &&
-    b.trip_end_date < b.trip_date
-  ) {
-    errors.trip_end_date = [
-      "The trip end date must be on or after the trip date.",
-    ];
-  }
-  if (
-    !errors.departure_time &&
-    !errors.estimated_return_time &&
-    String(b.estimated_return_time).slice(0, 5) <=
-      String(b.departure_time).slice(0, 5)
-  ) {
-    errors.estimated_return_time = [
-      "The estimated return time must be after the departure time.",
-    ];
-  }
-
-  const count = Number(b.number_of_passengers);
-  if (!Number.isInteger(count) || count < 1) {
-    errors.number_of_passengers = [
-      "The number of passengers must be at least 1.",
-    ];
-  }
-
-  if (Object.keys(errors).length) {
-    throw httpError(422, Object.values(errors)[0][0], errors);
-  }
-}
-
-/* ================= ROUTES ================= */
-
-const routes = [];
-
-function route(method, path, handler) {
-  const keys = [];
-  const pattern = path.replace(/:([a-z_]+)/g, (_, key) => {
-    keys.push(key);
-    return "([^/]+)";
-  });
-  routes.push({ method, re: new RegExp(`^${pattern}$`), keys, handler });
-}
-
-/* ---------- register (Edge Function) ---------- */
-
-route("POST", "/register", async ({ body }) => {
-  const { data, error } = await supabase.functions.invoke("register-user", {
-    body,
-  });
-  if (error) throw await functionsError(error);
-  return data;
-});
-
-/* ---------- user accounts (administrators only) ---------- */
-
-// Pending deletion accounts go last (the view sorts by sort_group, then by name).
-route("GET", "/users", async () => ({
-  data: check(
-    await supabase
-      .from("users_ordered")
-      .select("*")
-      .order("sort_group", { ascending: true })
-      .order("last_name", { ascending: true })
-      .order("first_name", { ascending: true }),
-  ),
-}));
-
-route("PUT", "/users/:id", async ({ params, body }) => {
-  const user = await rpc("update_user", {
-    p_user_id: params.id,
-    p_first_name: body.first_name ?? null,
-    p_last_name: body.last_name ?? null,
-    p_email: body.email ?? null,
-    p_role: body.role ?? null,
-    p_position: body.position || null,
-    p_phone_number: body.phone_number || null,
-    p_password: body.password || null,
-  });
-  return { data: user };
-});
-
-// The account is disabled right away and removed after 30 days.
-route("DELETE", "/users/:id", async ({ params }) =>
-  rpc("request_user_deletion", { p_user_id: params.id }),
-);
-
-route("POST", "/users/:id/cancel-deletion", async ({ params }) => {
-  const user = await rpc("cancel_user_deletion", { p_user_id: params.id });
-  return { data: user };
-});
-
-/* ---------- vehicle requests ---------- */
-
-// Pending first (soonest travel date on top), then the rest newest first.
-route("GET", "/vehicle-requests/approved", async () => {
-  const rows = check(
-    await supabase
-      .from("vehicle_requests")
-      .select("id, trip:trips!vehicle_request_id(id)")
-      .eq("status", "approved"),
-  );
-
-  // Approved requests that do not have a trip yet need an allocation.
-  return {
-    data: rows.filter((row) => !one(row.trip)).map(({ id }) => ({ id })),
-  };
-});
-
-route("GET", "/vehicle-requests", async ({ query }) => {
-  const requested = Math.max(1, Number(query.page) || 1);
-
-  const fetchPage = (page) => {
-    let request = supabase
-      .from("vehicle_requests_ordered")
-      .select("*", { count: "exact" });
-    if (query.status) request = request.eq("status", query.status);
-    if (query.trip_type) request = request.eq("trip_type", query.trip_type);
-
-    return request
-      .order("sort_group", { ascending: true })
-      .order("pending_trip_date", { ascending: true })
-      .order("pending_departure_time", { ascending: true })
-      .order("created_at", { ascending: false })
-      .order("id", { ascending: false })
-      .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
-  };
-
-  let page = requested;
-  let result = await fetchPage(page);
-
-  // The list got shorter (for example after a decision): go back to the first page.
-  if (result.error?.code === "PGRST103" && page > 1) {
-    page = 1;
-    result = await fetchPage(page);
-  }
-
-  const rows = check(result);
-  const total = result.count ?? rows.length;
-
-  // The requesters are loaded separately (embedding through a view is not reliable).
-  const ids = [...new Set(rows.map((row) => row.requester_id).filter(Boolean))];
-  const people = {};
-  if (ids.length) {
-    const profiles = check(
-      await supabase
-        .from("profiles")
-        .select("id, first_name, last_name, full_name, email, position")
-        .in("id", ids),
-    );
-    profiles.forEach((profile) => {
-      people[profile.id] = profile;
-    });
-  }
-
-  return {
-    data: rows.map((row) => toRequest(row, people[row.requester_id] ?? null)),
-    meta: {
-      current_page: page,
-      last_page: Math.max(1, Math.ceil(total / PAGE_SIZE)),
-      per_page: PAGE_SIZE,
-      total,
-    },
-  };
-});
-
-route("GET", "/vehicle-requests/:id", async ({ params }) => {
-  const row = check(
-    await supabase
-      .from("vehicle_requests")
-      .select(REQUEST_SELECT)
-      .eq("id", params.id)
-      .maybeSingle(),
-  );
-  if (!row) throw httpError(404, "Vehicle request not found.");
-  return { data: toRequest(row) };
-});
-
-route("POST", "/vehicle-requests", async ({ body }) => {
-  validateRequestBody(body);
-
-  // requester_id is filled in by the database (auth.uid()).
-  const row = check(
-    await supabase
-      .from("vehicle_requests")
-      .insert({
-        trip_date: body.trip_date,
-        trip_end_date: body.trip_end_date,
-        trip_type: body.trip_type,
-        departure_time: body.departure_time,
-        destination: String(body.destination).trim(),
-        purpose: String(body.purpose).trim(),
-        estimated_return_time: body.estimated_return_time,
-        passengers: String(body.passengers).trim(),
-        number_of_passengers: Number(body.number_of_passengers),
-      })
-      .select(REQUEST_SELECT)
-      .single(),
-  );
-
-  return { data: toRequest(row) };
-});
-
-route("PUT", "/vehicle-requests/:id/edit", async ({ params, body }) => {
-  validateRequestBody(body);
-
-  return rpc("edit_vehicle_request", {
-    p_request_id: Number(params.id),
-    p_trip_date: body.trip_date,
-    p_trip_end_date: body.trip_end_date,
-    p_trip_type: body.trip_type,
-    p_departure_time: body.departure_time,
-    p_destination: String(body.destination).trim(),
-    p_purpose: String(body.purpose).trim(),
-    p_estimated_return_time: body.estimated_return_time,
-    p_passengers: String(body.passengers).trim(),
-    p_number_of_passengers: Number(body.number_of_passengers),
-    p_edit_reason: body.edit_reason ?? null,
-  });
-});
-
-route("PATCH", "/vehicle-requests/:id/status", async ({ params, body }) =>
-  rpc("update_vehicle_request_status", {
-    p_request_id: Number(params.id),
-    p_status: body.status,
-    p_remarks: body.remarks ?? null,
-  }),
-);
-
-/* ---------- allocations ---------- */
-
-route("GET", "/allocations", async ({ query }) => {
-  await completeFinishedTrips();
-
-  const rows = check(
-    await supabase
-      .from("allocations")
-      .select(ALLOCATION_SELECT)
-      .order("id", { ascending: false })
-      .limit(Number(query.per_page) || 100),
-  );
-
-  return { data: rows.map(toAllocation) };
-});
-
-route("GET", "/allocation-options", async ({ query }) =>
-  rpc("allocation_options", {
-    p_start_date: query.start_date,
-    p_end_date: query.end_date,
-    p_ignore_trip_id: query.ignore_trip_id,
-  }),
-);
-
-// Administrators only (staff can reassign, but cannot create allocations).
-route("POST", "/allocations", async ({ body }) => {
-  const id = await rpc("create_allocation", {
-    p_vehicle_request_id: Number(body.vehicle_request_id),
-    p_vehicle_id: Number(body.vehicle_id),
-    p_driver_id: Number(body.driver_id),
-    p_notes: body.notes ?? null,
-    p_approve_request: Boolean(body.approve_request),
-  });
-  return { data: { id } };
-});
-
-route("PUT", "/allocations/:id", async ({ params, body }) => {
-  const id = await rpc("update_allocation", {
-    p_allocation_id: Number(params.id),
-    p_vehicle_id: body.vehicle_id,
-    p_driver_id: body.driver_id,
-    p_status: body.status,
-    p_notes: body.notes,
-    p_new_date: body.new_date,
-    p_reason: body.reason,
-  });
-  return { data: { id } };
-});
-
-route("POST", "/allocation-drivers", async ({ body }) =>
-  // The function answers { data: <dropdown item> }.
-  rpc("add_driver", {
-    p_name: body.name ?? null,
-    p_contact_number: body.contact_number ?? null,
-    p_license_number: body.license_number ?? null,
-    p_license_expiry_date: body.license_expiry_date || null,
-  }),
-);
-
-route("POST", "/allocation-vehicles", async ({ body }) =>
-  rpc("add_vehicle", {
-    p_plate_number: body.plate_number ?? null,
-    p_vehicle_model: body.vehicle_model ?? null,
-    p_capacity: body.capacity ?? null,
-  }),
-);
-
-// The printable form is built here from the data the backend sends.
-route("GET", "/allocations/:id/print", async ({ params }) => {
-  const data = await rpc("get_vehicle_request_print", {
-    p_allocation_id: Number(params.id),
-  });
-  return vehicleRequestHtml(data);
-});
-
-/* ---------- date changes ---------- */
-
-route("GET", "/reschedule-requests", async ({ query }) => {
-  let request = supabase
-    .from("reschedule_requests")
-    .select(
-      "*, requester:profiles!requested_by(full_name), trip:trips!trip_id(id, destination, trip_date, allocation:allocations!trip_id(id))",
-    )
-    .order("created_at", { ascending: false });
-
-  if (query.status) request = request.eq("status", query.status);
-
-  const rows = check(await request);
-
-  return {
-    data: rows.map(({ requester, trip, ...row }) => ({
-      ...row,
-      requested_by: requester?.full_name ?? null,
-      allocation_id: one(trip?.allocation)?.id ?? null,
-      trip: trip
-        ? {
-            id: trip.id,
-            destination: trip.destination,
-            trip_date: trip.trip_date,
-          }
-        : null,
-    })),
-  };
-});
-
-route(
-  "POST",
-  "/allocations/:id/reschedule-requests",
-  async ({ params, body }) => {
-    const id = await rpc("request_reschedule", {
-      p_allocation_id: Number(params.id),
-      p_new_date: body.new_date || null,
-      p_reason: body.reason ?? null,
-    });
-    return { data: { id } };
-  },
-);
-
-route("POST", "/allocations/:id/reschedule", async ({ params, body }) => {
-  const id = await rpc("reschedule_trip", {
-    p_allocation_id: Number(params.id),
-    p_new_date: body.new_date || null,
-    p_reason: body.reason ?? null,
-  });
-  return { data: { id } };
-});
-
-route("POST", "/reschedule-requests/:id/approve", async ({ params, body }) => {
-  const id = await rpc("approve_reschedule", {
-    p_request_id: Number(params.id),
-    p_admin_reason: body.admin_reason ?? null,
-  });
-  return { data: { id } };
-});
-
-route(
-  "POST",
-  "/reschedule-requests/:id/disapprove",
-  async ({ params, body }) => {
-    const id = await rpc("disapprove_reschedule", {
-      p_request_id: Number(params.id),
-      p_admin_reason: body.admin_reason ?? null,
-    });
-    return { data: { id } };
-  },
-);
-
-/* ---------- sharing a trip request between administrators ---------- */
-
-// The other active administrators (the person who is signed in is left out).
-// The function answers { data: [ { id, name, email } ] }.
-route("GET", "/admins", async () => rpc("list_admins"));
-
-// Trip requests other administrators sent to me.
-route("GET", "/trip-request-shares", async () => {
-  const rows = check(
-    await supabase
-      .from("trip_request_shares")
-      .select(
-        `*, sender:profiles!sender_id(id, full_name, email), allocation:allocations!allocation_id(${ALLOCATION_SELECT})`,
-      )
-      .order("created_at", { ascending: false }),
-  );
-
-  return {
-    data: rows
-      .filter((row) => row.allocation)
-      .map((row) => ({
-        id: row.id,
-        created_at: row.created_at,
-        sender: {
-          id: row.sender?.id,
-          name: row.sender?.full_name ?? "—",
-          email: row.sender?.email,
-        },
-        allocation: toAllocation(row.allocation),
-      })),
-  };
-});
-
-route("POST", "/trip-request-shares", async ({ body }) => {
-  // No select(): the sender is not allowed to read the row back (see shares_select).
-  check(
-    await supabase.from("trip_request_shares").insert({
-      allocation_id: body.allocation_id,
-      recipient_id: body.recipient_id,
-    }),
-  );
-
-  const recipient = check(
-    await supabase
-      .from("profiles")
-      .select("id, full_name")
-      .eq("id", body.recipient_id)
-      .maybeSingle(),
-  );
-
-  return {
-    recipient: {
-      id: body.recipient_id,
-      name: recipient?.full_name ?? "the administrator",
-    },
-  };
-});
-
-/* ---------- trips ---------- */
-
-async function listTrips() {
-  await completeFinishedTrips();
-
-  const rows = check(
-    await supabase
-      .from("trips")
-      .select(TRIP_SELECT)
-      .order("trip_date", { ascending: true }),
-  );
-
-  return { data: rows.map(toTrip) };
-}
-
-// Administrators and staff see every trip. Row Level Security limits faculty to their own trips.
-route("GET", "/trips", listTrips);
-route("GET", "/my-trips", listTrips);
-
-/* ---------- vehicles and maintenance ---------- */
-
-route("GET", "/vehicles", async () => ({
-  data: check(
-    await supabase.from("vehicles").select("*").order("plate_number"),
-  ),
-}));
-
-route("GET", "/maintenance-logs", async () => {
-  const rows = check(
-    await supabase
-      .from("vehicle_maintenance")
-      .select(LOG_SELECT)
-      .order("maintenance_date", { ascending: false }),
-  );
-  return { data: rows.map(toLog) };
-});
-
-route("POST", "/maintenance-logs", async ({ body }) => {
-  const row = check(
-    await supabase
-      .from("vehicle_maintenance")
-      .insert(toLogColumns(body))
-      .select(LOG_SELECT)
-      .single(),
-  );
-  return { data: toLog(row) };
-});
-
-route("PATCH", "/maintenance-logs/:id", async ({ params, body }) => {
-  const row = check(
-    await supabase
-      .from("vehicle_maintenance")
-      .update(toLogColumns(body))
-      .eq("id", params.id)
-      .select(LOG_SELECT)
-      .maybeSingle(),
-  );
-  if (!row) throw httpError(404, "Maintenance record not found.");
-  return { data: toLog(row) };
-});
-
-route("GET", "/preventive-maintenance-checklists", async () => ({
-  data: check(
-    await supabase
-      .from("preventive_maintenance_checklists")
-      .select("*, vehicle:vehicles!vehicle_id(id, plate_number, vehicle_model)")
-      .order("inspection_date", { ascending: false })
-      .order("id", { ascending: false }),
-  ),
-}));
-
-route("POST", "/preventive-maintenance-checklists", async ({ body }) => {
-  // The form sends '' for blank dates and ratings. The database needs null.
-  const columns = Object.fromEntries(
-    Object.entries(body ?? {}).map(([key, value]) => [
-      key,
-      value === "" ? null : value,
-    ]),
-  );
-
-  const row = check(
-    await supabase
-      .from("preventive_maintenance_checklists")
-      .insert(columns)
-      .select("*")
-      .single(),
-  );
-  return { data: row };
-});
-
-route(
-  "GET",
-  "/preventive-maintenance-checklists/:id/print",
-  async ({ params }) => {
-    const data = await rpc("get_checklist_print", {
-      p_checklist_id: Number(params.id),
-    });
-    return checklistHtml(data);
-  },
-);
-
-/* ================= DISPATCH ================= */
-
-async function dispatch(method, url, { params = {}, body = {} } = {}) {
-  const path = String(url).split("?")[0];
-
-  // The 8-hour login has ended: sign out this tab. main.js sends the user to /login.
-  if (sessionExpired()) {
-    await signOutLocal();
-    throw httpError(401, "Your session has expired. Please sign in again.");
-  }
-
-  for (const entry of routes) {
-    if (entry.method !== method) continue;
-
-    const match = entry.re.exec(path);
-    if (!match) continue;
-
-    const pathParams = Object.fromEntries(
-      entry.keys.map((key, index) => [
-        key,
-        decodeURIComponent(match[index + 1]),
-      ]),
-    );
-
-    const data = await entry.handler({
-      params: pathParams,
-      query: params ?? {},
-      body: body ?? {},
-    });
-    return { data, status: 200 };
-  }
-
-  throw httpError(404, "Not found.");
-}
-
-const api = {
-  get: (url, config = {}) => dispatch("GET", url, { params: config.params }),
-  post: (url, body) => dispatch("POST", url, { body }),
-  put: (url, body) => dispatch("PUT", url, { body }),
-  patch: (url, body) => dispatch("PATCH", url, { body }),
-  delete: (url) => dispatch("DELETE", url),
-};
-
-export default api;
+export default api

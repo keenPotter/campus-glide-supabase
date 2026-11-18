@@ -2,7 +2,13 @@
 import { computed, reactive, ref, watch } from 'vue'
 import api, { errorMessage, unwrap, validationErrors } from '@/lib/api'
 import { formatDateRange, formatTime } from '@/lib/format'
-import { availabilityOptions, conflictOf, passengerText } from '@/lib/allocations'
+import {
+  availabilityOptions,
+  conflictOf,
+  passengerText,
+  seatingCapacityWarning,
+  vehicleAvailabilityOptions,
+} from '@/lib/allocations'
 import { useNotificationStore } from '@/stores/notifications'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseModal from '@/components/ui/BaseModal.vue'
@@ -32,8 +38,13 @@ const vehicleItems = ref([])
 const driverItems = ref([])
 const conflicts = ref([])
 
-const vehicleOptions = computed(() => availabilityOptions(vehicleItems.value))
+const vehicleOptions = computed(() => vehicleAvailabilityOptions(vehicleItems.value))
 const driverOptions = computed(() => availabilityOptions(driverItems.value))
+const capacityWarning = computed(() => {
+  const vehicle = vehicleItems.value.find((item) => String(item.id) === String(form.vehicle_id))
+  const passengerCount = props.request?.passenger_count ?? props.request?.number_of_passengers
+  return seatingCapacityWarning(passengerCount, vehicle?.capacity)
+})
 
 function placeholderFor(items, noun) {
   if (loadingOptions.value) return 'Checking availability...'
@@ -58,6 +69,8 @@ async function loadOptions() {
         params: {
           start_date: request.trip_date,
           end_date: request.trip_end_date || request.trip_date,
+          start_time: String(request.departure_time || '').slice(0, 5),
+          end_time: String(request.return_time || request.estimated_return_time || '').slice(0, 5),
         },
       }),
     )
@@ -164,6 +177,14 @@ function closeConflict() {
         :error="errors.vehicle_id"
         required
       />
+
+      <p
+        v-if="capacityWarning"
+        role="status"
+        class="rounded-card border-l-4 border-amber-400 bg-amber-50 p-3 text-small text-amber-900"
+      >
+        {{ capacityWarning }}
+      </p>
 
       <BaseSelect
         v-model="form.driver_id"

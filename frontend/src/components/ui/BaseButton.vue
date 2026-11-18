@@ -16,6 +16,7 @@ const variants = {
   outline: 'border border-line bg-white text-ink hover:bg-neutral-200 hover:text-ink hover:underline',
   ghost: 'cursor-pointer text-ink-muted underline-offset-4 hover:bg-neutral-100 hover:text-ink hover:underline',
   danger: 'bg-red-600 text-white hover:bg-red-700',
+  success: 'bg-green-600 text-white hover:bg-green-700 active:bg-green-800',
 }
 
 const classes = computed(() => [

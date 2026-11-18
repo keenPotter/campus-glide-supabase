@@ -4,19 +4,10 @@ import { useAuthStore } from '@/stores/auth'
 import { todayIso } from '@/lib/format'
 import { ACTIVE_STATUSES, findConflicts, resourceState } from '@/lib/allocations'
 
-// Order of the summary list: needs allocation, in progress, scheduled, completed.
-const ROW_ORDER = { waiting: 0, in_progress: 1, scheduled: 2, completed: 3 }
-
-function rowGroup(row) {
-  if (row.kind === 'waiting') return 'waiting'
-  return row.allocation?.status ?? 'scheduled'
-}
-
 /**
  * Data for the allocation pages.
  * Faculty get their own allocations and date change requests.
- * Administrators and staff also get the approved requests that need a vehicle and driver,
- * the vehicle and driver lists, and the trip requests sent to them.
+ * Administrators and staff also get the vehicle and driver lists.
  */
 export function useAllocations() {
   const auth = useAuthStore()
@@ -28,10 +19,8 @@ export function useAllocations() {
   const dateChanges = ref([])
 
   // Administrators and staff only
-  const waiting = ref([])
   const vehicles = ref([])
   const drivers = ref([])
-  const shares = ref([])
   const admins = ref([])
 
   const loading = ref(true)
@@ -52,22 +41,21 @@ export function useAllocations() {
 
       if (canManage.value) {
         calls.push(
-          api.get('/allocation-options'),
-          api.get('/trip-request-shares'),
+          api.get('/allocation-options', {
+            params: { skip_completion: 1 },
+          }),
           api.get('/admins'),
         )
       }
 
-      const [changeRows, options, shareRows, adminRows] = (await Promise.all(calls)).map(unwrap)
+      const [changeRows, options, adminRows] = (await Promise.all(calls)).map(unwrap)
 
       allocations.value = allocationRows
       dateChanges.value = changeRows
 
       if (canManage.value) {
-        waiting.value = options.requests
         vehicles.value = options.vehicles
         drivers.value = options.drivers
-        shares.value = shareRows
         admins.value = adminRows
       }
     } catch (error) {
@@ -95,7 +83,7 @@ export function useAllocations() {
   )
 
   const counts = computed(() => {
-    const result = { scheduled: 0, in_progress: 0, completed: 0 }
+    const result = { scheduled: 0, in_progress: 0, completed: 0, cancelled: 0 }
     allocations.value.forEach((allocation) => {
       if (result[allocation.status] !== undefined) result[allocation.status]++
     })
@@ -143,16 +131,16 @@ export function useAllocations() {
 
   /* ================= SUMMARY (administrators and staff) ================= */
 
-  // One list for the summary: allocations, approved requests that still need
-  // a vehicle and driver, and trip requests sent by other administrators.
-  // Sorted by group: needs allocation, in progress, scheduled, completed.
-  // Inside a group, the soonest date comes first. Completed trips show the newest first.
+  // Only trips with an allocation belong on this page.
   const summaryRows = computed(() => {
     const fromAllocation = (allocation, extra) => ({
       allocation,
       requestId: allocation.vehicle_request?.id,
       destination: allocation.trip?.destination,
       requester: allocation.vehicle_request?.requester,
+      bookingSource: allocation.vehicle_request?.booking_source,
+      requesterDepartment: allocation.vehicle_request?.requester_department,
+      requesterContact: allocation.vehicle_request?.requester_contact,
       // The trip type is the one the faculty member chose on the request form.
       tripType: allocation.vehicle_request?.trip_type,
       passengers: allocation.vehicle_request?.number_of_passengers,
@@ -161,46 +149,16 @@ export function useAllocations() {
       ...extra,
     })
 
-    const rows = [
-      ...allocations.value.map((allocation) =>
-        fromAllocation(allocation, { key: `a${allocation.id}`, kind: 'allocation' }),
-      ),
-      ...waiting.value.map((request) => ({
-        key: `r${request.id}`,
-        kind: 'waiting',
-        request,
-        requestId: request.id,
-        destination: request.destination,
-        requester: request.requester,
-        tripType: request.trip_type,
-        passengers: request.number_of_passengers,
-        date: request.trip_date,
-        time: request.departure_time,
-      })),
-      ...shares.value.map((share) =>
-        fromAllocation(share.allocation, { key: `s${share.id}`, kind: 'received', share }),
-      ),
-    ]
-
-    return rows.sort((x, y) => {
-      const groupX = rowGroup(x)
-      const groupY = rowGroup(y)
-
-      const byGroup = (ROW_ORDER[groupX] ?? 4) - (ROW_ORDER[groupY] ?? 4)
-      if (byGroup !== 0) return byGroup
-
-      const byDate = `${x.date ?? ''} ${x.time ?? ''}`.localeCompare(`${y.date ?? ''} ${y.time ?? ''}`)
-      return groupX === 'completed' ? -byDate : byDate
-    })
+    return allocations.value.map((allocation) =>
+      fromAllocation(allocation, { key: `a${allocation.id}`, kind: 'allocation' }),
+    )
   })
 
   return {
     allocations,
     dateChanges,
-    waiting,
     vehicles,
     drivers,
-    shares,
     admins,
     loading,
     loadError,

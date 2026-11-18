@@ -9,6 +9,8 @@ const props = defineProps({
   newCount: { type: Number, required: true },
 })
 
+const emit = defineEmits(['open-unviewed'])
+
 const items = computed(() => [
   {
     label: 'Total scheduled',
@@ -31,10 +33,26 @@ const items = computed(() => [
 <template>
   <BaseCard :title="`${tripTypeLabel} trips`" subtitle="Schedule summary">
     <div class="grid grid-cols-3 gap-2">
-      <div
+      <component
+        :is="item.label === 'Unviewed' ? 'button' : 'div'"
+        :type="item.label === 'Unviewed' ? 'button' : undefined"
+        :disabled="item.label === 'Unviewed' ? item.value === 0 : undefined"
         v-for="item in items"
         :key="item.label"
+        :aria-label="
+          item.label === 'Unviewed'
+            ? `${item.value} unviewed trips. Show the first unviewed trip.`
+            : undefined
+        "
+        :class="
+          item.label === 'Unviewed'
+            ? item.value
+              ? 'cursor-pointer hover:bg-primary-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary'
+              : 'cursor-not-allowed opacity-50'
+            : ''
+        "
         class="flex flex-col items-center gap-1 rounded-card bg-surface px-1 py-3 text-center"
+        @click="item.label === 'Unviewed' && emit('open-unviewed')"
       >
         <svg
           class="h-5 w-5 text-primary-700"
@@ -50,7 +68,7 @@ const items = computed(() => [
         </svg>
         <p class="text-section-title">{{ item.value }}</p>
         <p class="text-small text-ink-muted">{{ item.label }}</p>
-      </div>
+      </component>
     </div>
   </BaseCard>
 </template>

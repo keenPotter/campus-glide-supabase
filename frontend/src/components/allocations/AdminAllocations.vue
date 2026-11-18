@@ -3,12 +3,25 @@ import { computed, ref, watch } from 'vue'
 import { useAllocations } from '@/composables/useAllocations'
 import { useToast } from '@/composables/useToast'
 import { useNotificationStore } from '@/stores/notifications'
-import { formatDate } from '@/lib/format'
-import { canPrint, canReassign, passengerText, requestNumber, whenText } from '@/lib/allocations'
+import { useAuthStore } from '@/stores/auth'
+import api, { errorMessage, validationErrors } from '@/lib/api'
+import { formatDate, formatDateTime } from '@/lib/format'
+import {
+  allocationStatusLabel,
+  canPrint,
+  canCancel,
+  canReassign,
+  passengerText,
+  requestNumber,
+  whenText,
+} from '@/lib/allocations'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import RefreshButton from '@/components/ui/RefreshButton.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
+import BaseModal from '@/components/ui/BaseModal.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
+import BaseTextarea from '@/components/ui/BaseTextarea.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import LoadError from '@/components/ui/LoadError.vue'
 import PaginationBar from '@/components/ui/PaginationBar.vue'
@@ -26,9 +39,9 @@ import RescheduleRequestCard from '@/components/allocations/RescheduleRequestCar
 // New allocations are made when a vehicle request is approved (Vehicle Requests page).
 const toast = useToast()
 const notifications = useNotificationStore()
+const auth = useAuthStore()
 
 const {
-  waiting,
   admins,
   loading,
   loadError,
@@ -47,15 +60,19 @@ const {
 } = useAllocations()
 
 const PAGE_SIZE = 10
+const DATE_CHANGE_PAGE_SIZE = 10
 
 const search = ref('')
 const typeFilter = ref('')
+const statusFilter = ref('')
 const monthFilter = ref('') // '' = all months, '01' to '12'
 const yearFilter = ref('') // '' = all years, for example '2026'
 const page = ref(1)
+const dateChangePage = ref(1)
 
 const modalOpen = ref(false)
 const editing = ref(null)
+const viewTarget = ref(null)
 // Conflicts found when a date change request was approved (vehicle and driver together).
 const pageConflicts = ref([])
 const printTarget = ref(null)
@@ -67,17 +84,22 @@ const quickAdd = ref('')
 // The faculty date change request the administrator is deciding on.
 const decisionItem = ref(null)
 const decisionAction = ref('')
+const cancelTarget = ref(null)
+const cancelReason = ref('')
+const cancelError = ref('')
+const cancelling = ref(false)
 
 const tones = {
   primary: 'bg-primary-50 text-primary-700',
   secondary: 'bg-secondary-50 text-secondary-700',
+  danger: 'bg-red-50 text-red-700',
 }
 
 const stats = computed(() => [
-  { label: 'Scheduled', value: counts.value.scheduled, tone: 'primary' },
-  { label: 'Ongoing', value: counts.value.in_progress, tone: 'secondary' },
-  { label: 'Done', value: counts.value.completed, tone: 'primary' },
-  { label: 'Needs allocation', value: waiting.value.length, tone: 'secondary' },
+  { label: 'Scheduled trips', value: counts.value.scheduled, tone: 'primary' },
+  { label: 'Ongoing trips', value: counts.value.in_progress, tone: 'secondary' },
+  { label: 'Completed trips', value: counts.value.completed, tone: 'primary' },
+  { label: 'Cancelled trips', value: counts.value.cancelled, tone: 'danger' },
 ])
 
 // Availability is for today.
@@ -85,9 +107,7 @@ const dotClass = { green: 'bg-primary', orange: 'bg-secondary', red: 'bg-red-500
 const dotLabel = { green: 'Available', orange: 'Scheduled today', red: 'On a trip now' }
 
 const kindLabel = {
-  allocation: 'Allocation',
-  waiting: 'Needs allocation',
-  received: 'Received request',
+  allocation: 'Trip',
 }
 
 // The first conflicted trip that can still be reassigned (scheduled trips only).
@@ -139,6 +159,18 @@ const typeOptions = computed(() => [
   { value: 'exclusive', label: `Exclusive (${countOf('exclusive')})`, dot: 'bg-secondary' },
 ])
 
+const statusOptions = computed(() => {
+  const countOfStatus = (status) =>
+    dateRows.value.filter((row) => row.allocation.status === status).length
+
+  return [
+    { value: 'scheduled', label: `Scheduled (${countOfStatus('scheduled')})` },
+    { value: 'in_progress', label: `Ongoing (${countOfStatus('in_progress')})` },
+    { value: 'completed', label: `Completed (${countOfStatus('completed')})` },
+    { value: 'cancelled', label: `Cancelled (${countOfStatus('cancelled')})` },
+  ]
+})
+
 // The trip type is the one the faculty member chose on the request form.
 // The order of the rows is set in useAllocations.
 const visibleRows = computed(() => {
@@ -146,15 +178,21 @@ const visibleRows = computed(() => {
 
   return dateRows.value.filter((row) => {
     if (typeFilter.value && row.tripType !== typeFilter.value) return false
+    if (statusFilter.value && row.allocation.status !== statusFilter.value) return false
     if (!query) return true
 
     const item = row.allocation
     return [
       row.destination,
       row.requester,
+      row.requesterDepartment,
+      row.requesterContact,
+      row.bookingSource === 'on_site' ? 'on-site' : 'online',
       item?.driver?.name,
       item?.vehicle?.plate_number,
       item?.vehicle?.vehicle_model,
+      item?.trip?.cancellation_reason,
+      item?.trip?.cancelled_by,
     ]
       .join(' ')
       .toLowerCase()
@@ -170,6 +208,19 @@ const pageRows = computed(() =>
   visibleRows.value.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE),
 )
 
+const dateChangePages = computed(() => Math.max(1, Math.ceil(pendingDateChanges.value.length / DATE_CHANGE_PAGE_SIZE)))
+const pagedDateChanges = computed(() =>
+  pendingDateChanges.value.slice(
+    (dateChangePage.value - 1) * DATE_CHANGE_PAGE_SIZE,
+    dateChangePage.value * DATE_CHANGE_PAGE_SIZE,
+  ),
+)
+const dateChangePaginationMeta = computed(() => ({
+  current_page: dateChangePage.value,
+  last_page: dateChangePages.value,
+  total: pendingDateChanges.value.length,
+}))
+
 const paginationMeta = computed(() => ({
   current_page: page.value,
   last_page: pageCount.value,
@@ -177,13 +228,17 @@ const paginationMeta = computed(() => ({
 }))
 
 // Go back to the first page when the search or filter changes.
-watch([search, typeFilter, monthFilter, yearFilter], () => {
+watch([search, typeFilter, statusFilter, monthFilter, yearFilter], () => {
   page.value = 1
 })
 
 // If the list gets shorter (for example after a reload), stay on a page that exists.
 watch(pageCount, (count) => {
   if (page.value > count) page.value = count
+})
+
+watch(dateChangePages, (count) => {
+  if (dateChangePage.value > count) dateChangePage.value = count
 })
 
 /* ================= ACTIONS ================= */
@@ -199,9 +254,9 @@ function openEdit(allocation) {
   modalOpen.value = true
 }
 
-function onSaved() {
+async function onSaved() {
   modalOpen.value = false
-  reload()
+  await reload()
   toast.success('Allocation updated.')
 }
 
@@ -210,14 +265,20 @@ function openPrint(allocation, notice = '') {
   printTarget.value = allocation
 }
 
-// Clicking anywhere on a row opens the View / Print window (when printing is allowed).
-// Clicks on a button or link keep doing their own job.
+function openView(row) {
+  viewTarget.value = row
+}
+
+function openRequestForm(row) {
+  viewTarget.value = null
+  openPrint(row.allocation)
+}
+
+// Clicking a trip row opens its details; buttons keep doing their own job.
 function onRowClick(event, row) {
   if (event.target.closest('a, button')) return
 
-  if (canPrint(row.allocation)) {
-    openPrint(row.allocation)
-  }
+  if (row.allocation) openView(row)
 }
 
 function onQuickAdded({ kind, item }) {
@@ -241,10 +302,10 @@ function closeDecision() {
   decisionAction.value = ''
 }
 
-function onDecided(message) {
+async function onDecided(message) {
   closeDecision()
+  await reload()
   toast.success(message)
-  reload()
 }
 
 // The requested date is already booked: close the decision window and show the conflicts.
@@ -252,20 +313,62 @@ function onDecisionConflict(found) {
   closeDecision()
   pageConflicts.value = found
 }
+
+function openCancel(allocation) {
+  cancelTarget.value = allocation
+  cancelReason.value = ''
+  cancelError.value = ''
+}
+
+function closeCancel() {
+  cancelTarget.value = null
+  cancelReason.value = ''
+  cancelError.value = ''
+}
+
+async function confirmCancel() {
+  if (!cancelTarget.value || cancelling.value) return
+
+  cancelError.value = ''
+  const reason = cancelReason.value.trim()
+  if (!reason) {
+    cancelError.value = 'Please provide a cancellation reason.'
+    return
+  }
+
+  cancelling.value = true
+  try {
+    await api.post(`/allocations/${cancelTarget.value.id}/cancel`, { reason })
+    closeCancel()
+    await reload()
+    toast.success('Trip cancelled.')
+  } catch (error) {
+    const errors = validationErrors(error)
+    cancelError.value =
+      errors.reason ?? errors.status ?? errorMessage(error, 'Unable to cancel this trip.')
+  } finally {
+    cancelling.value = false
+  }
+}
 </script>
 
 <template>
   <div class="flex flex-col gap-page">
     <!-- Header -->
-    <div class="flex flex-wrap items-start justify-between gap-3">
-      <div>
+    <div class="page-header">
+      <div class="page-header-copy">
         <h1 class="text-page-title">Vehicle-Driver Allocation</h1>
         <p class="mt-1 text-small text-ink-muted">
-          A vehicle and driver are assigned when a vehicle request is approved. Scheduling conflicts
-          are flagged automatically.
+          {{
+            auth.isAdministrator
+              ? 'Manage scheduled, ongoing, completed, and cancelled trips.'
+              : 'View scheduled, ongoing, completed, and cancelled trips.'
+          }}
         </p>
       </div>
-      <BaseButton variant="outline" size="sm" :disabled="loading" @click="reload">Refresh</BaseButton>
+      <div class="page-actions">
+        <RefreshButton :loading="loading" label="Refresh allocations" @click="reload" />
+      </div>
     </div>
 
     <LoadError :message="loadError" @retry="reload" />
@@ -278,10 +381,15 @@ function onDecisionConflict(found) {
     >
       <p class="min-w-0 flex-1 font-medium">
         {{ conflictTexts.length }} conflict{{ conflictTexts.length > 1 ? 's' : '' }} detected:
-        {{ conflictTexts.join(' · ') }}. Please resolve before confirming the schedule.
+        {{ conflictTexts.join(' · ') }}.
+        {{
+          auth.isAdministrator
+            ? 'Please resolve before confirming the schedule.'
+            : 'Please contact an administrator to resolve this conflict.'
+        }}
       </p>
       <BaseButton
-        v-if="resolvableConflict"
+        v-if="auth.isAdministrator && resolvableConflict"
         size="sm"
         variant="outline"
         @click="openEdit(resolvableConflict)"
@@ -294,7 +402,9 @@ function onDecisionConflict(found) {
     <div class="grid grid-cols-1 gap-page lg:grid-cols-2">
       <BaseCard title="Vehicles" subtitle="Availability today" :padded="false">
         <template #actions>
-          <BaseButton size="sm" @click="quickAdd = 'vehicle'">+ Add vehicle</BaseButton>
+          <BaseButton v-if="auth.isAdministrator" size="sm" @click="quickAdd = 'vehicle'">
+            + Add vehicle
+          </BaseButton>
         </template>
 
         <EmptyState v-if="!loading && !vehicleList.length" title="No vehicles found" />
@@ -318,7 +428,9 @@ function onDecisionConflict(found) {
 
       <BaseCard title="Drivers" subtitle="Availability today" :padded="false">
         <template #actions>
-          <BaseButton size="sm" @click="quickAdd = 'driver'">+ Add driver</BaseButton>
+          <BaseButton v-if="auth.isAdministrator" size="sm" @click="quickAdd = 'driver'">
+            + Add driver
+          </BaseButton>
         </template>
 
         <EmptyState v-if="!loading && !driverList.length" title="No drivers found" />
@@ -348,7 +460,37 @@ function onDecisionConflict(found) {
       </span>
     </p>
 
-    <!-- Stats -->
+    <!-- Date change requests from faculty -->
+    <BaseCard
+      v-if="loading || pendingDateChanges.length"
+      title="Date change requests"
+      :subtitle="
+        auth.isAdministrator
+          ? `${pendingDateChanges.length} waiting for your decision`
+          : `${pendingDateChanges.length} requests · read-only`
+      "
+    >
+      <div v-if="loading" class="flex justify-center p-8" aria-label="Loading date change requests">
+        <div class="h-7 w-7 animate-spin rounded-full border-2 border-line border-t-primary" />
+      </div>
+      <div v-else class="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <RescheduleRequestCard
+          v-for="item in pagedDateChanges"
+          :key="item.id"
+          :item="item"
+          :is-admin="auth.isAdministrator"
+          @approve="decide($event, 'approve')"
+          @disapprove="decide($event, 'disapprove')"
+        />
+      </div>
+      <PaginationBar
+        v-if="!loading"
+        :meta="dateChangePaginationMeta"
+        @change="(value) => (dateChangePage = value)"
+      />
+    </BaseCard>
+
+    <!-- Trip status summary -->
     <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
       <div v-for="stat in stats" :key="stat.label" class="stat-card">
         <span
@@ -361,34 +503,16 @@ function onDecisionConflict(found) {
       </div>
     </div>
 
-    <!-- Date change requests from faculty -->
-    <BaseCard
-      v-if="pendingDateChanges.length"
-      title="Date change requests"
-      :subtitle="`${pendingDateChanges.length} waiting for your decision`"
-    >
-      <div class="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <RescheduleRequestCard
-          v-for="item in pendingDateChanges"
-          :key="item.id"
-          :item="item"
-          is-admin
-          @approve="decide($event, 'approve')"
-          @disapprove="decide($event, 'disapprove')"
-        />
-      </div>
-    </BaseCard>
-
-    <!-- Allocation summary -->
-    <BaseCard title="Allocation summary" :padded="false">
+    <!-- Allocated trip details -->
+    <BaseCard title="Allocated Trip Details" :padded="false">
       <div class="flex flex-col gap-3 border-b border-line p-card">
         <BaseInput
           v-model="search"
           type="search"
-          placeholder="Search by destination, requester, driver or plate..."
+          placeholder="Search allocations..."
         />
         <SegmentedControl v-model="typeFilter" :options="typeOptions" label="Trip type" />
-        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <BaseSelect
             v-model="monthFilter"
             label="Month"
@@ -403,6 +527,13 @@ function onDecisionConflict(found) {
             allow-empty
             :options="yearOptions"
           />
+          <BaseSelect
+            v-model="statusFilter"
+            label="Status"
+            placeholder="All statuses"
+            allow-empty
+            :options="statusOptions"
+          />
         </div>
       </div>
 
@@ -414,39 +545,60 @@ function onDecisionConflict(found) {
         v-else-if="!visibleRows.length"
         title="Nothing found"
         :message="
-          typeFilter || search || monthFilter || yearFilter
-            ? 'No requests match your filters.'
-            : 'Approved requests and allocations will appear here.'
+          typeFilter || statusFilter || search || monthFilter || yearFilter
+            ? 'No trips match your filters.'
+            : 'Scheduled, ongoing, completed, and cancelled trips will appear here.'
         "
       />
 
-      <ul v-else class="divide-y divide-line">
+      <div
+        v-if="!loading && visibleRows.length"
+        class="hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_7rem_12rem] items-center gap-3 border-b border-line bg-neutral-50 px-card py-3 text-small font-semibold uppercase tracking-wide text-ink-muted lg:grid"
+      >
+        <div class="min-w-0">Trip / Status</div>
+        <div class="min-w-0">Vehicle / Driver</div>
+        <div class="min-w-0">Date / Conflict</div>
+        <div class="min-w-0">Passengers</div>
+        <div class="min-w-0 text-right">Action</div>
+      </div>
+
+      <ul v-if="!loading && visibleRows.length" class="divide-y divide-line">
         <li
           v-for="row in pageRows"
           :key="row.key"
-          class="flex cursor-pointer flex-col gap-3 p-card transition hover:bg-neutral-50 lg:flex-row lg:items-center"
+          class="flex cursor-pointer flex-col gap-3 p-card transition-colors hover:bg-neutral-50 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_7rem_12rem] lg:items-center"
           tabindex="0"
           @click="onRowClick($event, row)"
           @keydown.enter="onRowClick($event, row)"
         >
           <!-- Trip -->
-          <div class="min-w-0 lg:w-1/4">
+          <div class="min-w-0">
             <p class="truncate font-medium text-ink">
               {{ requestNumber(row.requestId ?? row.allocation?.id) }} · {{ row.destination ?? '—' }}
             </p>
             <p class="truncate text-small text-ink-muted">
-              <template v-if="row.kind === 'received'">Sent by {{ row.share.sender.name }}</template>
-              <template v-else>{{ row.requester ?? '—' }}</template>
+              {{ row.requester ?? '—' }}
             </p>
             <div class="mt-1.5 flex flex-wrap items-center gap-2">
               <span class="text-small text-ink-muted">{{ kindLabel[row.kind] }}</span>
+              <span
+                class="rounded-full px-2 py-1 text-xs font-medium"
+                :class="row.bookingSource === 'on_site' ? 'bg-secondary-50 text-secondary-700' : 'bg-neutral-100 text-ink-muted'"
+              >
+                {{ row.bookingSource === 'on_site' ? 'On-Site' : 'Online' }}
+              </span>
               <TripTypeBadge :type="row.tripType" />
-              <StatusBadge v-if="row.allocation" :status="row.allocation.status ?? 'scheduled'" />
+              <StatusBadge
+                v-if="row.allocation"
+                :status="row.allocation.status ?? 'scheduled'"
+                :label="allocationStatusLabel(row.allocation.status ?? 'scheduled')"
+              />
+              <StatusBadge v-else-if="row.request" :status="row.request.status" />
             </div>
           </div>
 
           <!-- Vehicle and driver -->
-          <div class="min-w-0 text-small lg:w-1/4">
+          <div class="min-w-0 text-small">
             <template v-if="row.allocation">
               <p class="truncate text-ink">
                 {{ row.allocation.vehicle?.vehicle_model ?? '—' }} ·
@@ -458,7 +610,7 @@ function onDecisionConflict(found) {
           </div>
 
           <!-- Date and conflict -->
-          <div class="min-w-0 text-small lg:flex-1">
+          <div class="min-w-0 text-small">
             <p class="text-ink">{{ whenText(row.date, row.time) }}</p>
             <p v-if="row.allocation && pendingByAllocation[row.allocation.id]" class="text-secondary-700">
               Date change requested: {{ formatDate(pendingByAllocation[row.allocation.id].new_date) }}
@@ -473,41 +625,43 @@ function onDecisionConflict(found) {
           </div>
 
           <!-- Number of passengers -->
-          <div class="min-w-0 text-small lg:w-28">
+          <div class="min-w-0 text-small">
             <p class="text-ink">{{ passengerText(row.passengers) }}</p>
           </div>
 
           <!-- Actions -->
-          <div class="flex flex-wrap gap-2 lg:justify-end">
+          <div class="flex min-w-0 flex-wrap items-center gap-2 lg:justify-end">
             <template v-if="row.kind === 'allocation'">
               <!-- Reassign is for scheduled trips only. It turns red when there is a conflict. -->
               <BaseButton
-                v-if="canReassign(row.allocation)"
+                v-if="auth.isAdministrator && canReassign(row.allocation)"
                 size="sm"
                 :variant="conflicts[row.allocation.id] ? 'danger' : 'outline'"
                 @click="openEdit(row.allocation)"
               >
                 Reassign
               </BaseButton>
-              <!-- Printing is available only for an approved request with a vehicle and driver assigned. -->
+              <BaseButton
+                v-if="auth.isAdministrator && canCancel(row.allocation)"
+                size="sm"
+                variant="danger"
+                @click="openCancel(row.allocation)"
+              >
+                Cancel
+              </BaseButton>
+              <BaseButton size="sm" variant="ghost" @click="openView(row)">
+                View
+              </BaseButton>
               <BaseButton
                 v-if="canPrint(row.allocation)"
                 size="sm"
                 variant="ghost"
                 @click="openPrint(row.allocation)"
               >
-                View / Print
+                Print / Send
               </BaseButton>
             </template>
 
-            <BaseButton
-              v-else-if="canPrint(row.allocation)"
-              size="sm"
-              variant="outline"
-              @click="openPrint(row.allocation)"
-            >
-              View / Print
-            </BaseButton>
           </div>
         </li>
       </ul>
@@ -515,16 +669,115 @@ function onDecisionConflict(found) {
       <PaginationBar v-if="!loading" :meta="paginationMeta" @change="(value) => (page = value)" />
     </BaseCard>
 
+    <BaseModal
+      :open="Boolean(viewTarget)"
+      title="Trip details"
+      subtitle="Allocated trip information"
+      @close="viewTarget = null"
+    >
+      <div v-if="viewTarget" class="grid grid-cols-1 gap-4 text-small sm:grid-cols-2">
+        <div>
+          <p class="text-ink-muted">Request</p>
+          <p class="font-medium">{{ requestNumber(viewTarget.requestId) }}</p>
+        </div>
+        <div>
+          <p class="text-ink-muted">Status</p>
+          <StatusBadge
+            :status="viewTarget.allocation.status ?? 'scheduled'"
+            :label="allocationStatusLabel(viewTarget.allocation.status ?? 'scheduled')"
+          />
+        </div>
+        <div>
+          <p class="text-ink-muted">Destination</p>
+          <p class="font-medium">{{ viewTarget.destination ?? '—' }}</p>
+        </div>
+        <div>
+          <p class="text-ink-muted">Requester</p>
+          <p class="font-medium">{{ viewTarget.requester ?? '—' }}</p>
+        </div>
+        <div>
+          <p class="text-ink-muted">Booking source</p>
+          <p class="font-medium">{{ viewTarget.bookingSource === 'on_site' ? 'On-Site' : 'Online' }}</p>
+        </div>
+        <template v-if="viewTarget.bookingSource === 'on_site'">
+          <div>
+            <p class="text-ink-muted">Office/Department</p>
+            <p class="font-medium">{{ viewTarget.requesterDepartment ?? '—' }}</p>
+          </div>
+          <div>
+            <p class="text-ink-muted">Contact Number</p>
+            <p class="font-medium">{{ viewTarget.requesterContact ?? '—' }}</p>
+          </div>
+        </template>
+        <div>
+          <p class="text-ink-muted">Date and time</p>
+          <p class="font-medium">{{ whenText(viewTarget.date, viewTarget.time) }}</p>
+        </div>
+        <div>
+          <p class="text-ink-muted">Passengers</p>
+          <p class="font-medium">{{ passengerText(viewTarget.passengers) }}</p>
+        </div>
+        <div>
+          <p class="text-ink-muted">Vehicle</p>
+          <p class="font-medium">
+            {{ viewTarget.allocation.vehicle?.vehicle_model ?? '—' }} ·
+            {{ viewTarget.allocation.vehicle?.plate_number ?? '—' }}
+          </p>
+        </div>
+        <div>
+          <p class="text-ink-muted">Driver</p>
+          <p class="font-medium">{{ viewTarget.allocation.driver?.name ?? '—' }}</p>
+        </div>
+        <div class="sm:col-span-2">
+          <p class="text-ink-muted">Purpose</p>
+          <p class="font-medium">{{ viewTarget.allocation.trip?.purpose ?? '—' }}</p>
+        </div>
+        <div
+          v-if="viewTarget.allocation.status === 'cancelled'"
+          class="sm:col-span-2 rounded-card border border-red-200 bg-red-50 p-3"
+        >
+          <p class="font-semibold text-red-800">Cancellation details</p>
+          <p class="mt-1 text-red-800">
+            Reason: {{ viewTarget.allocation.trip?.cancellation_reason || '—' }}
+          </p>
+          <p class="text-red-800">
+            Cancelled by: {{ viewTarget.allocation.trip?.cancelled_by || '—' }}
+          </p>
+          <p class="text-red-800">
+            Cancelled at: {{ formatDateTime(viewTarget.allocation.trip?.cancelled_at) }}
+          </p>
+        </div>
+      </div>
+      <template #footer>
+        <BaseButton
+          v-if="viewTarget && canPrint(viewTarget.allocation)"
+          size="sm"
+          variant="outline"
+          @click="openRequestForm(viewTarget)"
+        >
+          View / Print request
+        </BaseButton>
+        <BaseButton size="sm" @click="viewTarget = null">Close</BaseButton>
+      </template>
+    </BaseModal>
+
     <AllocationModal
+      v-if="auth.isAdministrator"
       :open="modalOpen"
       :allocation="editing"
       @close="modalOpen = false"
       @saved="onSaved"
     />
 
-    <QuickAddModal :kind="quickAdd" @close="quickAdd = ''" @created="onQuickAdded" />
+    <QuickAddModal
+      v-if="auth.isAdministrator"
+      :kind="quickAdd"
+      @close="quickAdd = ''"
+      @created="onQuickAdded"
+    />
 
     <DateChangeDecisionModal
+      v-if="auth.isAdministrator"
       :item="decisionItem"
       :action="decisionAction"
       @close="closeDecision"
@@ -539,6 +792,33 @@ function onDecisionConflict(found) {
       @close="printTarget = null"
       @sent="reload"
     />
+
+    <BaseModal
+      v-if="auth.isAdministrator"
+      :open="Boolean(cancelTarget)"
+      title="Cancel scheduled trip"
+      :subtitle="cancelTarget ? `Request #${cancelTarget.vehicle_request?.id}` : ''"
+      @close="closeCancel"
+    >
+      <p class="mb-3 text-small text-ink-muted">
+        Cancelling releases the assigned vehicle and driver. This action cannot be undone.
+      </p>
+      <BaseTextarea
+        v-model="cancelReason"
+        label="Reason for cancellation"
+        placeholder="Enter the reason for cancelling this trip."
+        :error="cancelError"
+        required
+      />
+      <template #footer>
+        <BaseButton variant="outline" :disabled="cancelling" @click="closeCancel">
+          Keep trip
+        </BaseButton>
+        <BaseButton variant="danger" :loading="cancelling" @click="confirmCancel">
+          Cancel trip
+        </BaseButton>
+      </template>
+    </BaseModal>
 
     <ConflictModal
       :conflicts="pageConflicts"

@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue'
 import { formatDate, formatTime } from '@/lib/format'
+import { allocationStatusLabel } from '@/lib/allocations'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import TripTypeBadge from '@/components/ui/TripTypeBadge.vue'
@@ -26,7 +27,10 @@ const canReschedule = computed(() => props.allocation.status === 'scheduled' && 
       </div>
       <div class="flex items-center gap-2">
         <TripTypeBadge :type="allocation.vehicle_request?.trip_type" />
-        <StatusBadge :status="allocation.status ?? 'scheduled'" />
+        <StatusBadge
+          :status="allocation.status ?? 'scheduled'"
+          :label="allocationStatusLabel(allocation.status ?? 'scheduled')"
+        />
       </div>
     </div>
 

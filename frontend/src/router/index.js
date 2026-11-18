@@ -30,7 +30,7 @@ const routes = [
   {
     path: '/requests/new',
     name: 'requests.create',
-    component: () => import('@/views/requests/RequestFormView.vue'),
+    redirect: { name: 'requests.index', query: { create: '1' } },
     meta: { requiresAuth: true, roles: ['faculty'] },
   },
   {
@@ -45,13 +45,12 @@ const routes = [
     component: () => import('@/views/requests/RequestFormView.vue'),
     meta: { requiresAuth: true, roles: ['faculty'] },
   },
-  // Administrators manage allocations here. Faculty see their own allocations.
-  // Changed: the page now lives in views/allocations (it was in modules/vehicle-driver-allocation).
+  // Administrators and staff manage allocations here.
   {
     path: '/allocations',
     name: 'allocations',
     component: () => import('@/views/allocations/AllocationsView.vue'),
-    meta: { requiresAuth: true, roles: ['administrator', 'faculty', 'staff'] },
+    meta: { requiresAuth: true, roles: ['administrator', 'staff'] },
   },
   {
     path: '/trip-schedule',
@@ -72,10 +71,16 @@ const routes = [
     meta: { requiresAuth: true, roles: ['administrator'] },
   },
   {
-    path: '/preventive-maintenance',
-    name: 'preventiveMaintenance',
-    component: () => import('@/views/maintenance/PreventiveMaintenanceView.vue'),
-    meta: { requiresAuth: true, roles: ['administrator'] },
+    path: '/audit-logs',
+    name: 'auditLogs',
+    component: () => import('@/views/AuditLogsView.vue'),
+    meta: { requiresAuth: true, roles: ['administrator'], showForbidden: true },
+  },
+  {
+    path: '/forbidden',
+    name: 'forbidden',
+    component: () => import('@/views/ForbiddenView.vue'),
+    meta: { requiresAuth: true },
   },
   {
     path: '/users',
@@ -85,8 +90,7 @@ const routes = [
   },
   {
     path: '/users/new',
-    name: 'users.create',
-    component: () => import('@/views/users/CreateUserView.vue'),
+    redirect: { name: 'users.index' },
     meta: { requiresAuth: true, roles: ['administrator'] },
   },
   {
@@ -109,11 +113,6 @@ router.beforeEach(async (to) => {
     await auth.fetchUser()
   }
 
-   // The 8-hour login has ended: sign out and go to the login page.
-  if (auth.isAuthenticated && !(await auth.checkSession())) {
-    return { name: 'login', query: { redirect: to.fullPath } }
-  }
-
   if (to.meta.requiresAuth && !auth.isAuthenticated) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
@@ -124,6 +123,10 @@ router.beforeEach(async (to) => {
 
   // Wrong role (for example, faculty typing /users/new): send back to the dashboard.
   if (to.meta.roles && !to.meta.roles.includes(auth.role)) {
+    if (to.meta.showForbidden) {
+      return { name: 'forbidden' }
+    }
+
     return { name: 'dashboard' }
   }
 

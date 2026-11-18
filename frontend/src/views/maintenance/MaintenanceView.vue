@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
+import { CalendarClock, CheckCircle2, ClipboardCheck, Eye, Pencil, Wrench } from 'lucide-vue-next'
 import api, { errorMessage, unwrap, validationErrors } from '@/lib/api'
 import { useNotificationStore } from '@/stores/notifications'
 import { useToast } from '@/composables/useToast'
@@ -8,12 +9,14 @@ import {
   formatKm,
   formatMoney,
   MAINTENANCE_TYPES,
+  MONTH_OPTIONS,
   STATUS_LABELS,
+  YEAR_OPTIONS,
   todayIso,
-  toDateString,
 } from '@/lib/format'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
+import RefreshButton from '@/components/ui/RefreshButton.vue'
 import BaseInput from '@/components/ui/BaseInput.vue'
 import BaseSelect from '@/components/ui/BaseSelect.vue'
 import BaseTextarea from '@/components/ui/BaseTextarea.vue'
@@ -22,15 +25,13 @@ import StatusBadge from '@/components/ui/StatusBadge.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import PaginationBar from '@/components/ui/PaginationBar.vue'
 import LoadError from '@/components/ui/LoadError.vue'
+import PreventiveMaintenanceSection from '@/components/maintenance/PreventiveMaintenanceSection.vue'
 
 const notifications = useNotificationStore()
 const toast = useToast()
 
 const PAGE_SIZE = 10
 const today = todayIso()
-
-// Order of the list: in progress, upcoming, overdue, cancelled, completed.
-const STATUS_ORDER = ['in_progress', 'upcoming', 'overdue', 'cancelled', 'completed']
 
 const ICONS = {
   wrench:
@@ -57,28 +58,33 @@ const formStatusOptions = ['scheduled', 'in_progress', 'completed', 'cancelled']
   label: STATUS_LABELS[value],
 }))
 
-const timeOptions = [
-  { value: 'month', label: 'This month' },
-  { value: '30', label: 'Last 30 days' },
-  { value: 'year', label: 'This year' },
-]
-
 /* ================= STATE ================= */
 
 const logs = ref([])
 const vehicles = ref([])
+const vehiclesLoaded = ref(false)
 const loading = ref(true)
 const loadError = ref('')
+const pageMeta = ref({ current_page: 1, last_page: 1, total: 0 })
+const summary = ref({})
 
 const search = ref('')
 const fStatus = ref('')
 const fVehicle = ref('')
 const fType = ref('')
-const fTime = ref('')
+const fMonth = ref('')
+const fYear = ref('')
 const page = ref(1)
 
 const showForm = ref(false)
 const editingId = ref(null)
+const detailsLog = ref(null)
+const rescheduling = ref(null)
+const rescheduleDate = ref('')
+const rescheduleSaving = ref(false)
+const earlyCompletionLog = ref(null)
+const completingId = ref(null)
+const checklistTarget = ref(null)
 const saving = ref(false)
 const errors = ref({})
 const formError = ref('')
@@ -95,12 +101,28 @@ async function loadAll() {
   loadError.value = ''
 
   try {
+    const params = {
+      page: page.value,
+      per_page: PAGE_SIZE,
+      search: search.value,
+      status: fStatus.value,
+      vehicle_id: fVehicle.value,
+      type: fType.value,
+      month: fMonth.value,
+      year: fYear.value,
+    }
+    const vehiclesRequest = vehiclesLoaded.value ? Promise.resolve(null) : api.get('/vehicles')
     const [logsResponse, vehiclesResponse] = await Promise.all([
-      api.get('/maintenance-logs'),
-      api.get('/vehicles'),
+      api.get('/maintenance-logs', { params }),
+      vehiclesRequest,
     ])
-    logs.value = toList(unwrap(logsResponse))
-    vehicles.value = toList(unwrap(vehiclesResponse))
+    logs.value = toList(logsResponse.data?.data)
+    pageMeta.value = logsResponse.data?.meta ?? pageMeta.value
+    summary.value = logsResponse.data?.summary ?? {}
+    if (vehiclesResponse) {
+      vehicles.value = toList(unwrap(vehiclesResponse))
+      vehiclesLoaded.value = true
+    }
   } catch (error) {
     loadError.value = errorMessage(error, 'Unable to load maintenance records.')
   } finally {
@@ -114,15 +136,18 @@ onMounted(loadAll)
 /* ================= DERIVED DATA ================= */
 
 function displayStatus(log) {
+  // A completed or cancelled record must never be reclassified by its next due date.
+  if (log.status === 'completed') return 'completed'
   if (log.status === 'cancelled') return 'cancelled'
   if (log.status === 'in_progress') return 'in_progress'
 
-  // Schedule status is based on the backend's next_due_date.
-  if (log.next_due_date) {
-    return log.next_due_date < today ? 'overdue' : 'upcoming'
+  // For scheduled records, date_performed is the planned maintenance date.
+  // next_due_date is the follow-up date after the maintenance is completed.
+  if (log.status === 'scheduled') {
+    return log.date_performed && log.date_performed < today ? 'overdue' : 'upcoming'
   }
 
-  return log.status === 'completed' ? 'completed' : 'upcoming'
+  return 'upcoming'
 }
 
 function vehicleModel(vehicle) {
@@ -133,45 +158,25 @@ function typeLabel(type) {
   return MAINTENANCE_TYPES.find((item) => item.value === type)?.label ?? type
 }
 
-// "Upcoming" and "Overdue" are sorted by the next due date. The other groups use the record date.
-function sortDate(log) {
-  return ['upcoming', 'overdue'].includes(log.display)
-    ? log.next_due_date || log.date_performed || ''
-    : log.date_performed || ''
-}
-
-// Sorted by status first. Inside a group the earliest date comes first,
-// except cancelled and completed records, which show the newest first.
-const rows = computed(() =>
-  logs.value
-    .map((log) => ({ ...log, display: displayStatus(log) }))
-    .sort((a, b) => {
-      const byStatus = STATUS_ORDER.indexOf(a.display) - STATUS_ORDER.indexOf(b.display)
-      if (byStatus !== 0) return byStatus
-
-      const byDate = sortDate(a).localeCompare(sortDate(b))
-      return ['cancelled', 'completed'].includes(a.display) ? -byDate : byDate
-    }),
-)
+const rows = computed(() => logs.value.map((log) => ({ ...log, display: displayStatus(log) })))
 
 const stats = computed(() => [
-  { label: 'Total Maintenance', value: rows.value.length, path: ICONS.wrench, tone: TONES.primary },
+  { label: 'Total Maintenance', value: summary.value.total ?? 0, path: ICONS.wrench, tone: TONES.primary },
   {
     label: 'This Month',
-    value: rows.value.filter((log) => (log.date_performed || '').startsWith(today.slice(0, 7)))
-      .length,
+    value: summary.value.this_month ?? 0,
     path: ICONS.calendar,
     tone: TONES.primary,
   },
   {
-    label: 'Upcoming',
-    value: rows.value.filter((log) => log.display === 'upcoming').length,
+    label: 'Upcoming Maintenance',
+    value: summary.value.upcoming ?? 0,
     path: ICONS.clock,
     tone: TONES.secondary,
   },
   {
-    label: 'Urgent',
-    value: rows.value.filter((log) => log.display === 'overdue').length,
+    label: 'Overdue Maintenance',
+    value: summary.value.overdue ?? 0,
     path: ICONS.alert,
     tone: TONES.danger,
   },
@@ -188,17 +193,6 @@ const vehicleFormOptions = computed(() =>
   })),
 )
 
-function inTimeRange(date) {
-  if (fTime.value === 'month') return date.startsWith(today.slice(0, 7))
-  if (fTime.value === 'year') return date.startsWith(today.slice(0, 4))
-  if (fTime.value === '30') {
-    const start = new Date()
-    start.setDate(start.getDate() - 30)
-    return date >= toDateString(start) && date <= today
-  }
-  return true
-}
-
 const filtered = computed(() => {
   const query = search.value.trim().toLowerCase()
 
@@ -206,10 +200,11 @@ const filtered = computed(() => {
     if (fStatus.value && log.display !== fStatus.value) return false
     if (fVehicle.value && String(log.vehicle?.id) !== String(fVehicle.value)) return false
     if (fType.value && log.type !== fType.value) return false
-    if (fTime.value && !inTimeRange(log.date_performed || '')) return false
+    if (fMonth.value && Number((log.date_performed || '').slice(5, 7)) !== Number(fMonth.value)) return false
+    if (fYear.value && (log.date_performed || '').slice(0, 4) !== fYear.value) return false
 
     if (query) {
-      const text = [log.vehicle?.plate_number, vehicleModel(log.vehicle), log.description, typeLabel(log.type)]
+      const text = [log.vehicle?.plate_number, vehicleModel(log.vehicle), log.description, log.type]
         .join(' ')
         .toLowerCase()
       if (!text.includes(query)) return false
@@ -219,18 +214,18 @@ const filtered = computed(() => {
   })
 })
 
-const pageCount = computed(() => Math.max(1, Math.ceil(filtered.value.length / PAGE_SIZE)))
-const pageItems = computed(() =>
-  filtered.value.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE),
-)
-const paginationMeta = computed(() => ({
-  current_page: page.value,
-  last_page: pageCount.value,
-  total: filtered.value.length,
-}))
+const pageItems = computed(() => filtered.value)
+const paginationMeta = computed(() => pageMeta.value)
 
-watch([search, fStatus, fVehicle, fType, fTime], () => {
+watch(search, (_, __, onCleanup) => {
   page.value = 1
+  const timeout = setTimeout(loadAll, 250)
+  onCleanup(() => clearTimeout(timeout))
+})
+
+watch([fStatus, fVehicle, fType, fMonth, fYear], () => {
+  page.value = 1
+  loadAll()
 })
 
 // Used by the card view (phones and tablets).
@@ -265,7 +260,20 @@ function openAdd() {
   showForm.value = true
 }
 
+function openChecklist(log) {
+  checklistTarget.value = log.vehicle
+}
+
+function closeChecklist() {
+  checklistTarget.value = null
+}
+
+function openDetails(log) {
+  detailsLog.value = log
+}
+
 function openEdit(log) {
+  detailsLog.value = null
   editingId.value = log.id
   form.value = {
     vehicle_id: log.vehicle?.id ?? '',
@@ -285,7 +293,30 @@ function openEdit(log) {
 // Clicks on a button or link are skipped, so they keep doing their own job.
 function onRowClick(event, log) {
   if (event.target.closest('a, button')) return
-  openEdit(log)
+  openDetails(log)
+}
+
+function openReschedule(log) {
+  rescheduling.value = log
+  rescheduleDate.value = log.date_performed || today
+}
+
+async function saveReschedule() {
+  if (!rescheduling.value || !rescheduleDate.value) return
+
+  rescheduleSaving.value = true
+  try {
+    await api.patch(`/maintenance-logs/${rescheduling.value.id}`, {
+      date_performed: rescheduleDate.value,
+    })
+    toast.success('Maintenance rescheduled.')
+    rescheduling.value = null
+    await loadAll()
+  } catch (error) {
+    toast.error(errorMessage(error, 'Unable to reschedule this maintenance.'))
+  } finally {
+    rescheduleSaving.value = false
+  }
 }
 
 async function save() {
@@ -332,13 +363,44 @@ async function save() {
   }
 }
 
-async function markCompleted(log) {
+async function startMaintenance(log) {
+  try {
+    await api.patch(`/maintenance-logs/${log.id}`, { status: 'in_progress' })
+    toast.success('Maintenance started.')
+    await loadAll()
+  } catch (error) {
+    toast.error(errorMessage(error, 'Unable to start this maintenance.'))
+  }
+}
+
+function markCompleted(log) {
+  if (log.date_performed > todayIso()) {
+    earlyCompletionLog.value = log
+    return
+  }
+
+  completeMaintenance(log)
+}
+
+async function completeMaintenance(log) {
+  if (completingId.value !== null) return
+
+  completingId.value = log.id
   try {
     await api.patch(`/maintenance-logs/${log.id}`, { status: 'completed' })
     toast.success('Marked as completed.')
+    earlyCompletionLog.value = null
     await loadAll()
   } catch (error) {
     toast.error(errorMessage(error, 'Unable to update this record.'))
+  } finally {
+    completingId.value = null
+  }
+}
+
+function confirmEarlyCompletion() {
+  if (earlyCompletionLog.value) {
+    completeMaintenance(earlyCompletionLog.value)
   }
 }
 </script>
@@ -346,12 +408,15 @@ async function markCompleted(log) {
 <template>
   <div class="flex flex-col gap-page">
     <!-- Page Header -->
-    <div class="flex flex-wrap items-start justify-between gap-3">
-      <div>
+    <div class="page-header">
+      <div class="page-header-copy">
         <h1 class="text-page-title">Vehicle Maintenance</h1>
-        <p class="mt-1 text-small text-ink-muted">Track and manage vehicle maintenance records</p>
+        <p class="mt-1 text-small text-ink-muted">Schedule, start, and track vehicle maintenance work</p>
       </div>
-      <BaseButton @click="openAdd">Add maintenance</BaseButton>
+      <div class="page-actions">
+        <RefreshButton :loading="loading" label="Refresh maintenance records" @click="loadAll" />
+        <BaseButton size="sm" @click="openAdd">Add maintenance</BaseButton>
+      </div>
     </div>
 
     <!-- Stats -->
@@ -371,13 +436,14 @@ async function markCompleted(log) {
     <!-- Search and filters -->
     <BaseCard>
       <div class="flex flex-col gap-3">
-        <BaseInput v-model="search" type="search" placeholder="Search maintenance records..." />
+        <BaseInput v-model="search" type="search" placeholder="Search maintenance..." />
 
-        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <BaseSelect v-model="fStatus" :options="statusOptions" placeholder="All status" allow-empty />
           <BaseSelect v-model="fVehicle" :options="vehicleFilterOptions" placeholder="All vehicles" allow-empty />
           <BaseSelect v-model="fType" :options="MAINTENANCE_TYPES" placeholder="All types" allow-empty />
-          <BaseSelect v-model="fTime" :options="timeOptions" placeholder="All time" allow-empty />
+          <BaseSelect v-model="fMonth" :options="MONTH_OPTIONS" placeholder="All months" allow-empty />
+          <BaseSelect v-model="fYear" :options="YEAR_OPTIONS" placeholder="All years" allow-empty />
         </div>
       </div>
     </BaseCard>
@@ -397,8 +463,8 @@ async function markCompleted(log) {
       </EmptyState>
 
       <template v-else>
-        <!-- Card view (phones and tablets). Tap a card to edit it. -->
-        <ul class="divide-y divide-line lg:hidden">
+        <!-- Card view stays in place until the table has room for its action buttons. -->
+        <ul class="divide-y divide-line 2xl:hidden">
           <li v-for="log in pageItems" :key="log.id"
             class="flex cursor-pointer flex-col gap-2 p-card transition active:bg-neutral-50"
             @click="onRowClick($event, log)">
@@ -422,58 +488,75 @@ async function markCompleted(log) {
               </div>
             </dl>
 
-            <div class="flex justify-end gap-2">
-              <BaseButton v-if="log.status !== 'completed'" size="sm" variant="primary" @click="markCompleted(log)">
-                Mark as completed
+            <div class="grid grid-cols-2 items-center gap-2">
+              <BaseButton class="w-full whitespace-nowrap" size="sm" variant="outline" @click="openChecklist(log)">
+                <ClipboardCheck :size="16" aria-hidden="true" /> Checklist
               </BaseButton>
-              <BaseButton size="sm" variant="outline" @click="openEdit(log)">Edit</BaseButton>
+              <BaseButton v-if="log.status === 'scheduled'" class="w-full whitespace-nowrap" size="sm" variant="primary" @click="startMaintenance(log)">
+                <Wrench :size="16" aria-hidden="true" /> Start maintenance
+              </BaseButton>
+              <BaseButton v-else-if="log.status === 'in_progress'" class="w-full whitespace-nowrap" size="sm" variant="success" :loading="completingId === log.id" @click="markCompleted(log)">
+                <CheckCircle2 :size="16" aria-hidden="true" /> Complete
+              </BaseButton>
+              <BaseButton class="w-full whitespace-nowrap" size="sm" variant="outline" @click="openDetails(log)">
+                <Eye :size="16" aria-hidden="true" /> View details
+              </BaseButton>
+              <BaseButton v-if="log.status === 'scheduled'" class="w-full whitespace-nowrap" size="sm" variant="outline" @click="openReschedule(log)">
+                <CalendarClock :size="16" aria-hidden="true" /> Reschedule
+              </BaseButton>
+              <span v-else class="invisible" aria-hidden="true" />
             </div>
           </li>
         </ul>
 
-        <!-- Table view (laptops and larger). Click a row to edit it. -->
-        <div class="hidden lg:block">
+        <!-- Wide-screen table view. Click a row to view details. -->
+        <div class="hidden 2xl:block">
           <table class="w-full table-fixed border-collapse">
             <thead class="table-head">
               <tr>
-                <th class="w-[15%] px-2 py-3 xl:px-card">Vehicle</th>
-                <th class="w-[17%] px-2 py-3 xl:px-card">Description</th>
-                <th class="w-[10%] px-2 py-3 xl:px-card">Date</th>
-                <th class="w-[10%] px-2 py-3 xl:px-card">Next due</th>
-                <th class="w-[10%] px-2 py-3 xl:px-card">Odometer</th>
-                <th class="w-[8%] px-2 py-3 xl:px-card">Cost</th>
-                <th class="w-[11%] px-2 py-3 xl:px-card">Status</th>
-                <th class="w-[19%] px-2 py-3 text-right xl:px-card">Actions</th>
+                <th scope="col" class="w-[13%] px-2 py-3 xl:px-card">Vehicle</th>
+                <th scope="col" class="w-[19%] px-2 py-3 xl:px-card">Description</th>
+                <th scope="col" class="w-[9%] px-2 py-3 xl:px-card">Date</th>
+                <th scope="col" class="w-[9%] px-2 py-3 xl:px-card">Next due</th>
+                <th scope="col" class="w-[9%] px-2 py-3 xl:px-card">Odometer</th>
+                <th scope="col" class="w-[8%] px-2 py-3 xl:px-card">Cost</th>
+                <th scope="col" class="w-[9%] px-2 py-3 xl:px-card">Status</th>
+                <th scope="col" class="w-[24%] px-2 py-3 text-right xl:px-card">Actions</th>
               </tr>
             </thead>
-
             <tbody class="divide-y divide-line">
-              <tr v-for="log in pageItems" :key="log.id" class="cursor-pointer hover:bg-neutral-50" tabindex="0"
+              <tr v-for="log in pageItems" :key="log.id" class="table-row-interactive" tabindex="0"
                 @click="onRowClick($event, log)" @keydown.enter="onRowClick($event, log)">
                 <td class="px-2 py-3 align-top xl:px-card">
                   <p class="font-medium text-ink">{{ log.vehicle?.plate_number ?? '—' }}</p>
                   <p class="truncate text-small text-ink-muted">{{ vehicleModel(log.vehicle) }}</p>
                 </td>
                 <td class="px-2 py-3 align-top text-small xl:px-card">
-                  <p class="line-clamp-3 break-words text-ink">
-                    {{ log.description || typeLabel(log.type) }}
-                  </p>
+                  <p class="line-clamp-3 break-words text-ink">{{ log.description || typeLabel(log.type) }}</p>
                   <p class="text-ink-muted">{{ typeLabel(log.type) }}</p>
                 </td>
                 <td class="px-2 py-3 align-top text-small xl:px-card">{{ formatDate(log.date_performed) }}</td>
                 <td class="px-2 py-3 align-top text-small xl:px-card">{{ formatDate(log.next_due_date) }}</td>
                 <td class="px-2 py-3 align-top text-small xl:px-card">{{ formatKm(log.vehicle?.mileage) }}</td>
                 <td class="px-2 py-3 align-top text-small xl:px-card">{{ formatMoney(log.cost) }}</td>
+                <td class="px-2 py-3 align-top xl:px-card"><StatusBadge :status="log.display" /></td>
                 <td class="px-2 py-3 align-top xl:px-card">
-                  <StatusBadge :status="log.display" />
-                </td>
-                <td class="px-2 py-3 align-top xl:px-card">
-                  <div class="flex flex-wrap justify-end gap-1.5">
-                    <BaseButton v-if="log.status !== 'completed'" size="sm" variant="primary"
-                      @click="markCompleted(log)">
-                      Mark as completed
+                  <div class="grid grid-cols-2 items-center gap-1.5">
+                    <BaseButton class="w-full whitespace-nowrap" size="sm" variant="outline" @click="openChecklist(log)">
+                      <ClipboardCheck :size="16" aria-hidden="true" /> Checklist
                     </BaseButton>
-                    <BaseButton size="sm" variant="outline" @click="openEdit(log)">Edit</BaseButton>
+                    <BaseButton v-if="log.status === 'scheduled'" class="w-full whitespace-nowrap" size="sm" variant="primary" @click="startMaintenance(log)">
+                      <Wrench :size="16" aria-hidden="true" /> Start
+                    </BaseButton>
+                    <BaseButton v-else-if="log.status === 'in_progress'" class="w-full whitespace-nowrap" size="sm" variant="success" :loading="completingId === log.id" @click="markCompleted(log)">
+                      <CheckCircle2 :size="16" aria-hidden="true" /> Complete
+                    </BaseButton>
+                    <BaseButton class="w-full whitespace-nowrap" size="sm" variant="outline" @click="openDetails(log)">
+                      <Eye :size="16" aria-hidden="true" /> Details
+                    </BaseButton>
+                    <BaseButton v-if="log.status === 'scheduled'" class="w-full whitespace-nowrap" size="sm" variant="outline" @click="openReschedule(log)">
+                      <CalendarClock :size="16" aria-hidden="true" /> Reschedule
+                    </BaseButton>
                   </div>
                 </td>
               </tr>
@@ -482,22 +565,87 @@ async function markCompleted(log) {
         </div>
       </template>
 
-      <PaginationBar v-if="!loading" :meta="paginationMeta" @change="(value) => (page = value)" />
+      <PaginationBar v-if="!loading" :meta="paginationMeta" @change="(value) => { page = value; loadAll() }" />
     </BaseCard>
 
+    <PreventiveMaintenanceSection
+      v-if="checklistTarget"
+      :vehicles="[checklistTarget]"
+      :selected-vehicle-id="checklistTarget.id"
+      auto-assess
+      modal-only
+      @close="closeChecklist"
+    />
+
+    <BaseModal
+      :open="Boolean(detailsLog)"
+      title="Maintenance details"
+      :subtitle="detailsLog ? `${detailsLog.vehicle?.plate_number ?? 'Vehicle'} — ${vehicleModel(detailsLog.vehicle)}` : ''"
+      @close="detailsLog = null"
+    >
+      <dl v-if="detailsLog" class="grid gap-4 sm:grid-cols-2">
+        <div><dt class="text-small text-ink-muted">Description</dt><dd class="font-medium">{{ detailsLog.description || typeLabel(detailsLog.type) }}</dd></div>
+        <div><dt class="text-small text-ink-muted">Work type</dt><dd class="font-medium">{{ typeLabel(detailsLog.type) }}</dd></div>
+        <div><dt class="text-small text-ink-muted">Date</dt><dd class="font-medium">{{ formatDate(detailsLog.date_performed) }}</dd></div>
+        <div v-if="detailsLog.completion_date"><dt class="text-small text-ink-muted">Completed on</dt><dd class="font-medium">{{ formatDate(detailsLog.completion_date) }}</dd></div>
+        <div><dt class="text-small text-ink-muted">Next due</dt><dd class="font-medium">{{ formatDate(detailsLog.next_due_date) }}</dd></div>
+        <div><dt class="text-small text-ink-muted">Odometer</dt><dd class="font-medium">{{ formatKm(detailsLog.vehicle?.mileage) }}</dd></div>
+        <div><dt class="text-small text-ink-muted">Cost</dt><dd class="font-medium">{{ formatMoney(detailsLog.cost) }}</dd></div>
+        <div><dt class="text-small text-ink-muted">Status</dt><dd><StatusBadge :status="detailsLog.display" /></dd></div>
+      </dl>
+      <template #footer>
+        <BaseButton variant="outline" @click="detailsLog = null">Close</BaseButton>
+        <BaseButton @click="openEdit(detailsLog)"><Pencil :size="16" aria-hidden="true" /> Edit</BaseButton>
+      </template>
+    </BaseModal>
+
+    <BaseModal
+      :open="Boolean(rescheduling)"
+      title="Reschedule maintenance"
+      :subtitle="rescheduling ? `${rescheduling.vehicle?.plate_number ?? 'Vehicle'} — ${vehicleModel(rescheduling.vehicle)}` : ''"
+      @close="rescheduling = null"
+    >
+      <BaseInput v-model="rescheduleDate" label="New maintenance date" type="date" required />
+      <template #footer>
+        <BaseButton variant="outline" @click="rescheduling = null">Cancel</BaseButton>
+        <BaseButton :loading="rescheduleSaving" @click="saveReschedule">Save date</BaseButton>
+      </template>
+    </BaseModal>
+
+    <BaseModal
+      :open="Boolean(earlyCompletionLog)"
+      title="Complete maintenance early?"
+      @close="earlyCompletionLog = null"
+    >
+      <p v-if="earlyCompletionLog">
+        Complete this maintenance early? It is scheduled for {{ formatDate(earlyCompletionLog.date_performed) }}.
+      </p>
+      <template #footer>
+        <BaseButton variant="outline" :disabled="completingId !== null" @click="earlyCompletionLog = null">
+          Cancel
+        </BaseButton>
+        <BaseButton
+          variant="success"
+          :loading="completingId === earlyCompletionLog?.id"
+          @click="confirmEarlyCompletion"
+        >
+          Complete Now
+        </BaseButton>
+      </template>
+    </BaseModal>
 
     <!-- Add / edit modal -->
     <BaseModal :open="showForm" :title="editingId ? 'Edit maintenance' : 'Add maintenance'"
       subtitle="Maintenance record" @close="showForm = false">
       <div class="flex flex-col gap-4">
         <p class="rounded-card border-l-4 border-secondary bg-secondary-50 p-3 text-small text-secondary-700">
-          The odometer on each record is the vehicle's current mileage from its vehicle record.
+          For scheduled work, Date is the planned maintenance date. Next due is the follow-up date after completion.
         </p>
 
         <BaseSelect v-model="form.vehicle_id" label="Vehicle" placeholder="Select vehicle" :options="vehicleFormOptions"
           :error="errors.vehicle_id" required />
 
-        <BaseSelect v-model="form.type" label="Type" :options="MAINTENANCE_TYPES" :error="errors.type" required />
+        <BaseSelect v-model="form.type" label="Work type" :options="MAINTENANCE_TYPES" :error="errors.type" required />
 
         <BaseTextarea v-model="form.description" label="Description" placeholder="What work is being done?"
           :error="errors.description" />

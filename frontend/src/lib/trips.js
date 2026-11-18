@@ -50,7 +50,7 @@ export function tripDateRange(trip) {
 }
 
 export function requesterName(trip) {
-  return fullName(requestOf(trip)?.requester) || 'Approved trip'
+  return requestOf(trip)?.requester_name || fullName(requestOf(trip)?.requester) || 'Approved trip'
 }
 
 export function vehicleName(trip) {

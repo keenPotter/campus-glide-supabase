@@ -3,6 +3,13 @@ import { formatDate, formatTime, parseDate, toDateString } from '@/lib/format'
 /** Trip statuses that still block a vehicle or driver. */
 export const ACTIVE_STATUSES = ['scheduled', 'in_progress']
 
+export function allocationStatusLabel(status) {
+  if (status === 'in_progress') return 'Ongoing'
+  if (status === 'completed') return 'Completed'
+  if (status === 'cancelled') return 'Cancelled'
+  return status === 'scheduled' ? 'Scheduled' : (status ?? '—')
+}
+
 // First and last day of a trip. A one-day trip ends on the day it starts.
 function tripRange(allocation) {
   const start = allocation.trip?.trip_date
@@ -86,6 +93,46 @@ export function availabilityOptions(items) {
   }))
 }
 
+export function vehicleAvailabilityOptions(items) {
+  return items.map((item) => {
+    const hasCapacity = item.capacity !== null
+      && item.capacity !== undefined
+      && String(item.capacity).trim() !== ''
+    const label = `${item.vehicle_model} (${item.plate_number}) - ${
+      hasCapacity ? `${item.capacity} seats` : 'Capacity not specified'
+    }`
+
+    return {
+      value: item.id,
+      label: item.available === false
+        ? `${label} — Unavailable (${item.unavailable_reason})`
+        : label,
+      disabled: item.available === false,
+    }
+  })
+}
+
+export function seatingCapacityWarning(passengerCount, capacity) {
+  if (
+    passengerCount === null
+    || passengerCount === undefined
+    || passengerCount === ''
+    || capacity === null
+    || capacity === undefined
+    || String(capacity).trim() === ''
+  ) {
+    return ''
+  }
+
+  const passengers = Number(passengerCount)
+  const seats = Number(capacity)
+  if (!Number.isFinite(passengers) || !Number.isFinite(seats) || seats <= 0 || passengers <= seats) {
+    return ''
+  }
+
+  return `Warning: Passenger count (${passengers}) exceeds this vehicle's seating capacity (${seats} seats). Confirm only if splitting passengers or running multiple shuttle trips.`
+}
+
 /**
  * The date range of a trip when it starts on `newStart` instead.
  * The end date moves by the same number of days.
@@ -145,5 +192,9 @@ export function canPrint(allocation) {
  * completed can no longer be reassigned.
  */
 export function canReassign(allocation) {
+  return allocation?.status === 'scheduled'
+}
+
+export function canCancel(allocation) {
   return allocation?.status === 'scheduled'
 }

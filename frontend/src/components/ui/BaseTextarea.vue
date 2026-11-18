@@ -13,7 +13,7 @@ defineEmits(['update:modelValue'])
 </script>
 
 <template>
-  <div>
+  <div class="min-w-0">
     <label v-if="label" class="field-label">
       {{ label }}
       <span v-if="required" class="text-red-500">*</span>

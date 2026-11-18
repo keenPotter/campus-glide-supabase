@@ -1,8 +1,8 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
+import { ClipboardCheck } from 'lucide-vue-next'
 import api, { errorMessage, unwrap, validationErrors } from '@/lib/api'
 import { formatDate, todayIso } from '@/lib/format'
-import { printHtml } from '@/lib/printHtml'
 import { useToast } from '@/composables/useToast'
 import BaseButton from '@/components/ui/BaseButton.vue'
 import BaseCard from '@/components/ui/BaseCard.vue'
@@ -13,14 +13,18 @@ import BaseModal from '@/components/ui/BaseModal.vue'
 import EmptyState from '@/components/ui/EmptyState.vue'
 import PaginationBar from '@/components/ui/PaginationBar.vue'
 
-// The maintenance checklist: every vehicle of the motorpool is listed.
-// The administrator clicks "Assess" on a vehicle, fills in the checklist and prints it.
+// The checklist can show the motorpool vehicles or focus on one vehicle opened from a maintenance record.
+// The administrator assesses the vehicle, fills in the checklist and prints it.
 // Printing saves the checklist as a record first (so the history is kept),
 // then the form goes back to blank so it can be used again for the next assessment.
 const props = defineProps({
   vehicles: { type: Array, default: () => [] },
+  selectedVehicleId: { type: [String, Number], default: null },
+  autoAssess: { type: Boolean, default: false },
+  modalOnly: { type: Boolean, default: false },
 })
 
+const emit = defineEmits(['close'])
 const toast = useToast()
 
 const PAGE_SIZE = 10
@@ -34,6 +38,8 @@ const page = ref(1)
 const showForm = ref(false)
 const assessing = ref(null)
 const saving = ref(false)
+const printableHtml = ref('')
+const printFrame = ref(null)
 const errors = ref({})
 const formError = ref('')
 
@@ -91,13 +97,21 @@ const form = ref(emptyForm())
 
 /* ================= DATA ================= */
 
-onMounted(loadRecords)
+onMounted(() => {
+  loadRecords()
+  if (props.autoAssess) {
+    const vehicle = props.vehicles.find((item) => String(item.id) === String(props.selectedVehicleId))
+    if (vehicle) openAssess(vehicle)
+  }
+})
 
 async function loadRecords() {
   loading.value = true
   loadError.value = ''
   try {
-    const response = await api.get('/preventive-maintenance-checklists')
+    const response = await api.get('/preventive-maintenance-checklists', {
+      params: props.selectedVehicleId ? { vehicle_id: props.selectedVehicleId } : {},
+    })
     const payload = unwrap(response)
     records.value = Array.isArray(payload) ? payload : []
   } catch (error) {
@@ -128,6 +142,7 @@ const filtered = computed(() => {
   const query = search.value.trim().toLowerCase()
 
   return props.vehicles
+    .filter((vehicle) => !props.selectedVehicleId || String(vehicle.id) === String(props.selectedVehicleId))
     .map((vehicle) => ({ ...vehicle, lastInspection: lastInspection.value[vehicle.id] ?? null }))
     .filter((vehicle) => {
       if (!query) return true
@@ -173,9 +188,21 @@ function onRowClick(event, vehicle) {
 function closeForm() {
   showForm.value = false
   assessing.value = null
+  emit('close')
 }
 
-// Saves the checklist, prints it, and resets the form so it can be used again.
+function closePrintPreview() {
+  printableHtml.value = ''
+  if (props.modalOnly) emit('close')
+}
+
+function printNow() {
+  const win = printFrame.value?.contentWindow
+  win?.focus()
+  win?.print()
+}
+
+// Saves the checklist, opens its print preview, and resets the form for the next assessment.
 async function printAssessment() {
   errors.value = {}
   formError.value = ''
@@ -201,10 +228,11 @@ async function printAssessment() {
       headers: { Accept: 'text/html' },
     })
 
-    closeForm()
+    showForm.value = false
+    assessing.value = null
     form.value = emptyForm()
-    toast.success('Checklist saved. Opening the print window.')
-    printHtml(html)
+    printableHtml.value = html
+    toast.success('Checklist saved. Review the print preview before printing.')
     await loadRecords()
   } catch (error) {
     errors.value = validationErrors(error)
@@ -218,10 +246,14 @@ async function printAssessment() {
 </script>
 
 <template>
-  <BaseCard title="Maintenance checklist" subtitle="Click a vehicle to assess it, then print the monthly checklist"
-    :padded="false">
+  <BaseCard
+    v-if="!modalOnly"
+    title="Maintenance checklist"
+    subtitle="Click a vehicle to assess it, then print the monthly checklist"
+    :padded="false"
+  >
     <div class="border-b border-line p-card">
-      <BaseInput v-model="search" type="search" placeholder="Search by plate number or model..." />
+      <BaseInput v-model="search" type="search" placeholder="Search vehicles..." />
     </div>
 
     <div v-if="loadError" class="m-card rounded-card bg-red-50 p-3 text-small text-red-700">
@@ -233,15 +265,21 @@ async function printAssessment() {
       <div class="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-primary" />
     </div>
 
-    <EmptyState v-else-if="!filtered.length" title="No vehicles found"
-      :message="search ? 'No vehicles match your search.' : 'Vehicles of the motorpool will appear here.'" />
+    <EmptyState
+      v-else-if="!filtered.length"
+      title="No vehicles found"
+      :message="search ? 'No vehicles match your search.' : 'Vehicles of the motorpool will appear here.'"
+    />
 
     <template v-else>
       <!-- Card view (phones and tablets). Tap a card to assess it. -->
       <ul class="divide-y divide-line lg:hidden">
-        <li v-for="vehicle in pageItems" :key="vehicle.id"
+        <li
+          v-for="vehicle in pageItems"
+          :key="vehicle.id"
           class="flex cursor-pointer flex-col gap-2 p-card transition active:bg-neutral-50"
-          @click="onRowClick($event, vehicle)">
+          @click="onRowClick($event, vehicle)"
+        >
           <div class="min-w-0">
             <p class="font-medium text-ink">
               {{ vehicle.plate_number }}
@@ -257,7 +295,9 @@ async function printAssessment() {
           </dl>
 
           <div class="flex justify-end gap-2">
-            <BaseButton size="sm" variant="primary" @click="openAssess(vehicle)">Assess</BaseButton>
+            <BaseButton size="sm" variant="primary" @click="openAssess(vehicle)">
+              <ClipboardCheck :size="16" aria-hidden="true" /> Assess
+            </BaseButton>
           </div>
         </li>
       </ul>
@@ -267,16 +307,22 @@ async function printAssessment() {
         <table class="w-full table-fixed border-collapse">
           <thead class="table-head">
             <tr>
-              <th class="w-[25%] px-2 py-3 xl:px-card">Plate number</th>
-              <th class="w-[30%] px-2 py-3 xl:px-card">Model</th>
-              <th class="w-[25%] px-2 py-3 xl:px-card">Last inspection</th>
-              <th class="w-[20%] px-2 py-3 text-right xl:px-card">Actions</th>
+              <th scope="col" class="w-[25%] px-2 py-3 xl:px-card">Plate number</th>
+              <th scope="col" class="w-[30%] px-2 py-3 xl:px-card">Model</th>
+              <th scope="col" class="w-[25%] px-2 py-3 xl:px-card">Last inspection</th>
+              <th scope="col" class="w-[20%] px-2 py-3 text-right xl:px-card">Actions</th>
             </tr>
           </thead>
 
           <tbody class="divide-y divide-line">
-            <tr v-for="vehicle in pageItems" :key="vehicle.id" class="cursor-pointer hover:bg-neutral-50" tabindex="0"
-              @click="onRowClick($event, vehicle)" @keydown.enter="onRowClick($event, vehicle)">
+            <tr
+              v-for="vehicle in pageItems"
+              :key="vehicle.id"
+              class="table-row-interactive"
+              tabindex="0"
+              @click="onRowClick($event, vehicle)"
+              @keydown.enter="onRowClick($event, vehicle)"
+            >
               <td class="px-2 py-3 align-top xl:px-card">
                 <p class="font-medium text-ink">{{ vehicle.plate_number }}</p>
               </td>
@@ -286,7 +332,9 @@ async function printAssessment() {
               </td>
               <td class="px-2 py-3 align-top xl:px-card">
                 <div class="flex flex-wrap justify-end gap-1.5">
-                  <BaseButton size="sm" variant="primary" @click="openAssess(vehicle)">Assess</BaseButton>
+                  <BaseButton size="sm" variant="primary" @click="openAssess(vehicle)">
+                    <ClipboardCheck :size="16" aria-hidden="true" /> Assess
+                  </BaseButton>
                 </div>
               </td>
             </tr>
@@ -296,41 +344,82 @@ async function printAssessment() {
     </template>
 
     <PaginationBar v-if="!loading" :meta="paginationMeta" @change="(value) => (page = value)" />
+  </BaseCard>
 
-    <BaseModal :open="showForm" title="Assess vehicle"
-      :subtitle="assessing ? `${assessing.plate_number} — ${modelOf(assessing)}` : ''" @close="closeForm">
+  <BaseModal
+      :open="showForm"
+      title="Assess vehicle"
+      :subtitle="assessing ? `${assessing.plate_number} — ${modelOf(assessing)}` : ''"
+      @close="closeForm"
+    >
       <div class="flex flex-col gap-4">
         <div class="grid gap-4 sm:grid-cols-2">
           <BaseInput v-model="form.pmuv_no" label="PMUV No." :error="errors.pmuv_no" />
-          <BaseInput v-model="form.inspection_date" label="Inspection date" type="date" :error="errors.inspection_date"
-            required />
-          <BaseInput v-model="form.inspector_mechanic" label="Inspector / mechanic"
-            :error="errors.inspector_mechanic" />
-          <BaseInput v-model="form.current_mileage" label="Current mileage (km)" type="number" min="0" step="1"
-            :error="errors.current_mileage" />
+          <BaseInput
+            v-model="form.inspection_date"
+            label="Inspection date"
+            type="date"
+            :error="errors.inspection_date"
+            required
+          />
+          <BaseInput
+            v-model="form.inspector_mechanic"
+            label="Inspector / mechanic"
+            :error="errors.inspector_mechanic"
+          />
+          <BaseInput
+            v-model="form.current_mileage"
+            label="Current mileage (km)"
+            type="number"
+            min="0"
+            step="1"
+            :error="errors.current_mileage"
+          />
         </div>
 
         <div>
           <h3 class="mb-3 font-semibold">Last service dates</h3>
           <div class="grid gap-4 sm:grid-cols-2">
-            <BaseInput v-for="item in DATE_FIELDS" :key="item.field" v-model="form[item.field]" :label="item.label"
-              type="date" :error="errors[item.field]" />
+            <BaseInput
+              v-for="item in DATE_FIELDS"
+              :key="item.field"
+              v-model="form[item.field]"
+              :label="item.label"
+              type="date"
+              :error="errors[item.field]"
+            />
           </div>
         </div>
 
         <div>
           <h3 class="mb-3 font-semibold">Vehicle condition</h3>
           <div class="grid gap-4 sm:grid-cols-2">
-            <BaseSelect v-for="item in CONDITION_FIELDS" :key="item.field" v-model="form[item.field]"
-              :label="item.label" placeholder="Not rated" :options="ratingOptions" allow-empty
-              :error="errors[item.field]" />
+            <BaseSelect
+              v-for="item in CONDITION_FIELDS"
+              :key="item.field"
+              v-model="form[item.field]"
+              :label="item.label"
+              placeholder="Not rated"
+              :options="ratingOptions"
+              allow-empty
+              :error="errors[item.field]"
+            />
           </div>
         </div>
 
-        <BaseTextarea v-model="form.other_parts" label="Other parts inspected" :rows="6" :error="errors.other_parts" />
+        <BaseTextarea
+          v-model="form.other_parts"
+          label="Other parts inspected"
+          :rows="6"
+          :error="errors.other_parts"
+        />
         <BaseTextarea v-model="form.remarks" label="Remarks" :rows="6" :error="errors.remarks" />
-        <BaseTextarea v-model="form.supervisor_recommendation" label="Supervisor's recommendation" :rows="6"
-          :error="errors.supervisor_recommendation" />
+        <BaseTextarea
+          v-model="form.supervisor_recommendation"
+          label="Supervisor's recommendation"
+          :rows="6"
+          :error="errors.supervisor_recommendation"
+        />
 
         <p v-if="formError" class="rounded-card bg-red-50 p-3 text-small font-medium text-red-700">
           {{ formError }}
@@ -341,6 +430,29 @@ async function printAssessment() {
         <BaseButton variant="outline" @click="closeForm">Cancel</BaseButton>
         <BaseButton :loading="saving" @click="printAssessment">Print</BaseButton>
       </template>
-    </BaseModal>
-  </BaseCard>
+  </BaseModal>
+
+  <Teleport to="body">
+    <div
+      v-if="printableHtml"
+      class="fixed inset-0 z-[55] flex items-start justify-center overflow-y-auto bg-ink/40 p-0 sm:p-page"
+    >
+      <div class="w-full max-w-4xl bg-surface p-card shadow-pop sm:rounded-card">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <h2 class="text-section-title">Preventive maintenance checklist</h2>
+          <div class="flex flex-wrap gap-2">
+            <BaseButton size="sm" @click="printNow">Print / Save as PDF</BaseButton>
+            <BaseButton variant="outline" size="sm" @click="closePrintPreview">Close</BaseButton>
+          </div>
+        </div>
+
+        <iframe
+          ref="printFrame"
+          :srcdoc="printableHtml"
+          title="Preventive maintenance checklist"
+          class="mt-3 h-[70vh] w-full rounded-card border border-line bg-white"
+        />
+      </div>
+    </div>
+  </Teleport>
 </template>

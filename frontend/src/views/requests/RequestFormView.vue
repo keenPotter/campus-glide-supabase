@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useVehicleRequestStore } from '@/stores/vehicleRequests'
 import { errorMessage, validationErrors } from '@/lib/api'
-import { todayIso, toTimeInput } from '@/lib/format'
+import { todayIso, toTimeInput, TRIP_TYPE_DESCRIPTIONS } from '@/lib/format'
 import { useToast } from '@/composables/useToast'
 import BaseCard from '@/components/ui/BaseCard.vue'
 import BaseButton from '@/components/ui/BaseButton.vue'
@@ -33,7 +33,7 @@ const form = reactive({
   purpose: '',
   trip_date: todayIso(),
   trip_end_date: todayIso(),
-  trip_type: 'inclusive',
+  trip_type: '',
   departure_time: '07:30',
   estimated_return_time: '17:00',
   passengers: '',
@@ -42,8 +42,8 @@ const form = reactive({
 })
 
 const tripTypes = [
-  { value: 'inclusive', label: 'Inclusive (Inside Nueva Vizcaya)' },
-  { value: 'exclusive', label: 'Exclusive (Outside Nueva Vizcaya)' },
+  { value: 'inclusive', label: TRIP_TYPE_DESCRIPTIONS.inclusive },
+  { value: 'exclusive', label: TRIP_TYPE_DESCRIPTIONS.exclusive },
 ]
 
 onMounted(async () => {
@@ -131,7 +131,7 @@ async function save() {
 </script>
 
 <template>
-  <div class="mx-auto flex max-w-3xl flex-col gap-page">
+  <div class="mx-auto flex min-w-0 max-w-3xl flex-col gap-page">
     <div>
       <h1 class="text-page-title">{{ isEdit ? 'Edit request' : 'Request for use of vehicle' }}</h1>
       <p class="mt-0.5 text-small text-ink-muted">
@@ -195,7 +195,7 @@ async function save() {
           <div class="sm:col-span-2">
             <BaseSelect
               v-model="form.trip_type"
-              label="Days of travel"
+              label="Trip type"
               :options="tripTypes"
               :error="errors.trip_type"
               required
@@ -253,9 +253,9 @@ async function save() {
         />
       </BaseCard>
 
-      <div class="flex justify-end gap-3">
-        <BaseButton variant="outline" @click="router.back()">Cancel</BaseButton>
-        <BaseButton type="submit" :loading="(submitting && !confirmOpen) || loading">
+      <div class="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-3">
+        <BaseButton class="w-full sm:w-auto" variant="outline" @click="router.back()">Cancel</BaseButton>
+        <BaseButton class="w-full sm:w-auto" type="submit" :loading="(submitting && !confirmOpen) || loading">
           {{ isEdit ? 'Save changes' : 'Submit request' }}
         </BaseButton>
       </div>

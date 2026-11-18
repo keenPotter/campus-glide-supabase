@@ -1,14 +1,16 @@
 import { defineStore } from 'pinia'
 import api from '@/lib/api'
+import { useAuthStore } from '@/stores/auth'
 
-// Maintenance records that still need the admin's attention.
-const OPEN_MAINTENANCE = ['in_progress']
+// A refresh that is already running is reused.
+// If two parts of the app ask for the numbers at the same time, only one request is sent.
+let running = null
 
 export const useNotificationStore = defineStore('notifications', {
   state: () => ({
     pendingRequests: 0,
     openMaintenance: 0,
-    // Approved requests that still need a vehicle and driver.
+    // Pending or approved requests that do not yet have a trip.
     needsAllocation: 0,
     // Faculty requests to change the date of a trip.
     pendingDateChanges: 0,
@@ -24,34 +26,27 @@ export const useNotificationStore = defineStore('notifications', {
   },
 
   actions: {
-    async refresh() {
-      const [requests, maintenance, approved, dateChanges] = await Promise.allSettled([
-        api.get('/vehicle-requests', { params: { status: 'pending' } }),
-        api.get('/maintenance-logs'),
-        api.get('/vehicle-requests/approved'),
-        api.get('/reschedule-requests', { params: { status: 'pending' } }),
-      ])
+    // One small request gets all four numbers. The sidebar numbers are shown to administrators only.
+    refresh() {
+      if (!useAuthStore().isAdministrator) return Promise.resolve()
+      if (running) return running
 
-      if (requests.status === 'fulfilled') {
-        const body = requests.value.data
-        // meta.total counts every page, not just the first one.
-        this.pendingRequests = body?.meta?.total ?? body?.data?.length ?? 0
-      }
+      running = api
+        .get('/notifications/summary')
+        .then(({ data }) => {
+          const summary = data?.data ?? {}
+          this.pendingRequests = summary.pending_requests ?? 0
+          this.openMaintenance = summary.open_maintenance ?? 0
+          this.needsAllocation = summary.needs_allocation ?? 0
+          this.pendingDateChanges = summary.pending_date_changes ?? 0
+        })
+        // If the request fails, the old numbers stay on the screen.
+        .catch(() => {})
+        .finally(() => {
+          running = null
+        })
 
-      if (maintenance.status === 'fulfilled') {
-        const body = maintenance.value.data
-        const logs = Array.isArray(body) ? body : (body?.data ?? [])
-        this.openMaintenance = logs.filter((log) => OPEN_MAINTENANCE.includes(log.status)).length
-      }
-
-      // This endpoint is not paginated, so the number of rows is the total.
-      if (approved.status === 'fulfilled') {
-        this.needsAllocation = approved.value.data?.data?.length ?? 0
-      }
-
-      if (dateChanges.status === 'fulfilled') {
-        this.pendingDateChanges = dateChanges.value.data?.data?.length ?? 0
-      }
+      return running
     },
 
     reset() {

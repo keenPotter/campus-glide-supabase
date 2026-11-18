@@ -39,14 +39,14 @@ async function submit() {
   notAllowed.value = false
 
   try {
-    // The admin's session is added automatically by the data layer (lib/api.js).
+    // The admin's Bearer token is added automatically by the api.js request interceptor.
     await api.post('/register', { ...form })
     toast.success('User created successfully.')
     Object.assign(form, emptyForm())
   } catch (error) {
     const status = error?.response?.status
 
-    // 401 (not logged in) is handled in api.js: it signs out and goes to /login.
+    // 401 (not logged in) is handled in api.js: it clears the token and goes to /login.
     if (status === 403) {
       notAllowed.value = true
       return
@@ -154,7 +154,7 @@ async function submit() {
         </div>
       </BaseCard>
 
-      <div class="flex justify-end">
+      <div class="page-actions sm:justify-end">
         <BaseButton type="submit" :loading="loading">Create user</BaseButton>
       </div>
     </form>

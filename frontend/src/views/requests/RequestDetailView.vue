@@ -11,6 +11,7 @@ import BaseButton from '@/components/ui/BaseButton.vue'
 import StatusBadge from '@/components/ui/StatusBadge.vue'
 import ApproveAssignModal from '@/components/requests/ApproveAssignModal.vue'
 import DisapproveRequestModal from '@/components/requests/DisapproveRequestModal.vue'
+import VehicleRequestEditModal from '@/components/requests/VehicleRequestEditModal.vue'
 
 const auth = useAuthStore()
 const store = useVehicleRequestStore()
@@ -22,6 +23,7 @@ const request = ref(null)
 const loading = ref(true)
 const approveOpen = ref(false)
 const disapproveOpen = ref(false)
+const editingRequest = ref(null)
 
 const canEdit = computed(
   () => auth.isFaculty && ['pending', 'approved'].includes(request.value?.status),
@@ -73,6 +75,11 @@ function onDisapproved() {
   disapproveOpen.value = false
   load()
 }
+
+function onRequestUpdated() {
+  editingRequest.value = null
+  load()
+}
 </script>
 
 <template>
@@ -81,8 +88,8 @@ function onDisapproved() {
   </div>
 
   <div v-else-if="request" class="mx-auto flex max-w-3xl flex-col gap-page">
-    <div class="flex flex-wrap items-start justify-between gap-3">
-      <div>
+    <div class="flex flex-col items-start gap-3 sm:flex-row sm:justify-between">
+      <div class="min-w-0">
         <button
           type="button"
           class="mb-1 text-body text-ink-muted hover:text-ink hover:underline"
@@ -91,10 +98,10 @@ function onDisapproved() {
           ← Back to requests
         </button>
         <h1 class="text-page-title">Request #{{ request.id }}</h1>
-        <p class="mt-0.5 text-small text-ink-muted">{{ request.destination }}</p>
+        <p class="mt-0.5 break-words text-small text-ink-muted">{{ request.destination }}</p>
       </div>
 
-      <StatusBadge :status="request.status" />
+      <StatusBadge :status="request.status" class="shrink-0" />
     </div>
 
     <div
@@ -102,7 +109,7 @@ function onDisapproved() {
       class="rounded-card border border-red-200 bg-red-50 p-card text-small text-red-800"
     >
       <p class="font-medium">Disapproved</p>
-      <p class="mt-1">{{ request.disapproval_reason }}</p>
+      <p class="mt-1 break-words">{{ request.disapproval_reason }}</p>
     </div>
 
     <!-- Shown while the request waits for approval again after an edit. -->
@@ -122,12 +129,12 @@ function onDisapproved() {
           class="grid grid-cols-1 gap-1 px-card py-3 sm:grid-cols-3 sm:gap-4"
         >
           <dt class="text-small text-ink-muted">{{ row.label }}</dt>
-          <dd class="text-body sm:col-span-2 sm:capitalize">{{ row.value || '—' }}</dd>
+          <dd class="min-w-0 break-words text-body sm:col-span-2 sm:capitalize">{{ row.value || '—' }}</dd>
         </div>
       </dl>
     </BaseCard>
 
-    <div class="flex flex-wrap justify-end gap-3">
+    <div class="page-actions sm:justify-end">
       <template v-if="auth.isAdministrator && request.status === 'pending'">
         <BaseButton @click="approveOpen = true">Approve</BaseButton>
         <BaseButton variant="outline" @click="disapproveOpen = true">
@@ -138,7 +145,7 @@ function onDisapproved() {
       <BaseButton
         v-if="canEdit"
         variant="outline"
-        @click="router.push({ name: 'requests.edit', params: { id: request.id } })"
+        @click="editingRequest = request"
       >
         Edit
       </BaseButton>
@@ -154,6 +161,11 @@ function onDisapproved() {
       :request="disapproveOpen ? request : null"
       @close="disapproveOpen = false"
       @done="onDisapproved"
+    />
+    <VehicleRequestEditModal
+      :request="editingRequest"
+      @close="editingRequest = null"
+      @saved="onRequestUpdated"
     />
   </div>
 </template>

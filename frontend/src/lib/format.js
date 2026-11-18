@@ -1,6 +1,18 @@
 const LOCALE = 'en-PH'
 const DATE_OPTIONS = { year: 'numeric', month: 'short', day: 'numeric' }
 
+export const MONTH_OPTIONS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+].map((label, index) => ({
+  value: String(index + 1),
+  label,
+}))
+
+export const YEAR_OPTIONS = Array.from({ length: 47 }, (_, offset) =>
+  String(new Date().getFullYear() + 10 - offset),
+).map((year) => ({ value: year, label: year }))
+
 /** Local date as "YYYY-MM-DD". (toISOString shifts the day for users ahead of UTC.) */
 export function toDateString(date) {
   const year = date.getFullYear()
@@ -101,6 +113,11 @@ export const ROLE_LABELS = {
 export const TRIP_TYPE_LABELS = {
   inclusive: 'Inclusive',
   exclusive: 'Exclusive',
+}
+
+export const TRIP_TYPE_DESCRIPTIONS = {
+  inclusive: 'Inclusive (Inside Nueva Vizcaya)',
+  exclusive: 'Exclusive (Outside Nueva Vizcaya)',
 }
 
 export const STATUS_LABELS = {

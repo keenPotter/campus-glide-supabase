@@ -10,9 +10,11 @@ const props = defineProps({
   daysInMonth: { type: Number, required: true },
   isScheduled: { type: Function, required: true },
   getTripCountForDate: { type: Function, required: true },
+  getCalendarDateForDay: { type: Function, required: true },
   isToday: { type: Function, required: true },
   isSelectedDate: { type: Function, required: true },
   hasNewTripOnDate: { type: Function, required: true },
+  isHighlighted: { type: Function, required: true },
 })
 
 const emit = defineEmits(['change-month', 'open-day'])
@@ -34,6 +36,7 @@ function dayClass(day) {
       : props.isToday(day)
         ? 'font-bold ring-2 ring-primary-600'
         : '',
+    props.isHighlighted(day) ? 'z-10 animate-pulse ring-4 ring-yellow-400 ring-offset-2' : '',
   ]
 }
 </script>
@@ -62,6 +65,7 @@ function dayClass(day) {
         type="button"
         class="group relative flex h-12 flex-col items-center justify-start rounded-card border pt-2 text-body transition disabled:cursor-default sm:h-14"
         :class="dayClass(day)"
+        :data-calendar-date="getCalendarDateForDay(day)"
         :disabled="!isScheduled(day)"
         @click="emit('open-day', day)"
       >
