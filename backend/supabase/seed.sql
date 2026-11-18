@@ -1,19 +1,19 @@
--- Run with: supabase db reset
+-- Run with: supabase db reset (local), or paste into the SQL Editor (hosted project)
 -- All passwords = "password"
 
 create schema if not exists seed;
 
 create or replace function seed.day(n integer) returns date
-language sql stable as $$ select public.today_ph() + n $$;
+language sql stable as $$ select public.app_today() + n $$;
 
 create or replace function seed.at(n integer, t time) returns timestamptz
-language sql stable as $$ select ((public.today_ph() + n) + t) at time zone 'Asia/Manila' $$;
+language sql stable as $$ select ((public.app_today() + n) + t) at time zone 'Asia/Manila' $$;
 
 create or replace function seed.uid(n integer) returns uuid
 language sql immutable as $$ select ('00000000-0000-4000-8000-' || lpad(n::text, 12, '0'))::uuid $$;
 
 -- ---------- Clear old data ----------
-create temp table old_auth as select auth_user_id from public.profiles;
+create temp table old_auth as select auth_id from public.profiles where auth_id is not null;
 
 truncate table
   public.trip_request_shares, public.preventive_maintenance_checklists, public.fuel_usage_records,
@@ -22,7 +22,7 @@ truncate table
   public.vehicles, public.profiles
 restart identity cascade;
 
-delete from auth.users where id in (select auth_user_id from old_auth);
+delete from auth.users where id in (select auth_id from old_auth);
 drop table old_auth;
 
 -- ---------- Users ----------
@@ -63,6 +63,9 @@ insert into seed_users values
   (26, 'delete.practice4@nvsu.edu.ph', 'Practice',        'Delete Four',  'Instructor I',              '09201234544', 'faculty',       true,  null),
   (27, 'delete.practice5@nvsu.edu.ph', 'Practice',        'Delete Five',  'Instructor I',              '09201234545', 'faculty',       true,  null);
 
+-- Remove existing logins that use these emails, so the seed can recreate them
+delete from auth.users where lower(email) in (select lower(email) from seed_users);
+
 insert into auth.users (
   instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
   raw_app_meta_data, raw_user_meta_data, created_at, updated_at, banned_until,
@@ -83,9 +86,10 @@ select gen_random_uuid(), seed.uid(id), seed.uid(id)::text, 'email',
 from seed_users;
 
 insert into public.profiles (
-  id, auth_user_id, email, first_name, last_name, position, phone_number, role,
+  id, auth_id, email, first_name, last_name, "position", phone_number, role,
   is_active, deletion_requested_at, created_at, updated_at
 )
+overriding system value
 select id, seed.uid(id), email, first_name, last_name, pos, phone, role, active,
   seed.at(del, '10:00:00'), seed.at(-55, '08:00:00'), seed.at(-55, '08:00:00')
 from seed_users;
@@ -97,7 +101,9 @@ drop table seed_users;
 insert into public.vehicles (
   id, plate_number, vehicle_model, vehicle_type, color, manufacture_year, capacity, mileage,
   status, last_maintenance_date, next_maintenance_date, is_active, created_at, updated_at
-) values
+)
+overriding system value
+values
   (1, 'SAA 1234', 'Toyota Hiace Commuter', 'Van',         'White',       2019, 15, 84500,  'in_use',      seed.day(-78),  seed.day(105), true,  seed.at(-55, '08:00:00'), seed.at(-1, '07:10:00')),
   (2, 'NBC 5521', 'Toyota Innova',         'MPV',         'Silver',      2020, 7,  61200,  'in_use',      seed.day(-103), seed.day(262), true,  seed.at(-55, '08:00:00'), seed.at(-1, '07:10:00')),
   (3, 'NAB 7712', 'Mitsubishi L300 FB',    'Utility Van', 'White',       2018, 3,  102300, 'in_use',      seed.day(-128), seed.day(-6),  true,  seed.at(-55, '08:00:00'), seed.at(-1, '07:10:00')),
@@ -111,7 +117,9 @@ insert into public.vehicles (
 insert into public.drivers (
   id, first_name, last_name, license_number, license_expiry_date, contact_number,
   address, assigned_vehicle_id, is_available, created_at, updated_at
-) values
+)
+overriding system value
+values
   (1, 'Juan',    'Reyes',      'N02-19-012345', seed.day(565),  '09181234503', 'Brgy. Bonfal West, Bayombong, Nueva Vizcaya',        8,    false, seed.at(-55, '08:00:00'), seed.at(-1, '07:10:00')),
   (2, 'Pedro',   'Bautista',   'N02-17-067890', seed.day(400),  '09181234504', 'Brgy. Magsaysay, Bayombong, Nueva Vizcaya',          2,    false, seed.at(-55, '08:00:00'), seed.at(-1, '07:10:00')),
   (3, 'Carlos',  'Mendoza',    'N02-15-034567', seed.day(20),   '09181234505', 'Brgy. Don Mariano Marcos, Bayombong, Nueva Vizcaya', 1,    false, seed.at(-55, '08:00:00'), seed.at(-1, '07:10:00')),
@@ -128,7 +136,7 @@ declare
   no_available text := 'No available driver or vehicle on the requested date.';
   no_date text := 'The requested date is already fully booked. Please choose another date.';
   no_vehicle text := 'No available vehicle for this group on the requested date. The only van that can carry 13 passengers is already booked.';
-  y integer := extract(year from public.today_ph())::int;
+  y integer := extract(year from public.app_today())::int;
 begin
   -- ---------- Vehicle requests ----------
   -- Approved, trip completed: 1, 2, 3, 4, 27 | in progress: 5, 6
@@ -139,6 +147,7 @@ begin
     purpose, estimated_return_time, passengers, number_of_passengers, status, disapproval_reason,
     edit_reason, approved_by, approved_date, created_at, updated_at
   )
+  overriding system value
   select v.id, v.requester, sent.at_, seed.day(v.d1), seed.day(v.d2), v.trip_type, v.dep::time,
     v.destination, v.purpose, v.ret::time, v.passengers, v.cnt, v.status, v.reason, v.edit_reason,
     v.approver, case when v.status = 'approved' then dec.at_ end, sent.at_, coalesce(dec.at_, sent.at_)
@@ -192,6 +201,7 @@ begin
     destination, purpose, trip_status, actual_departure_time, actual_return_time, actual_mileage,
     notes, created_at, updated_at
   )
+  overriding system value
   select a.id, a.req, a.vehicle, a.driver, r.trip_date, r.departure_time, r.estimated_return_time,
     r.destination, r.purpose, a.status, a.dep::time, a.ret::time, a.mileage, a.notes, r.approved_date,
     case a.status
@@ -224,6 +234,7 @@ begin
   insert into public.allocations (
     id, trip_id, vehicle_id, driver_id, allocated_by, allocation_date, notes, ruv_number, created_at, updated_at
   )
+  overriding system value
   select t.id, t.id, t.vehicle_id, t.driver_id, r.approved_by, r.approved_date,
     case t.vehicle_request_id
       when 2 then 'Overnight stay in Quezon City.'
@@ -243,6 +254,7 @@ begin
     id, trip_id, requested_by, old_date, new_date, reason, status, handled_by, admin_reason,
     handled_at, created_at, updated_at
   )
+  overriding system value
   select v.id, t.id, v.by_, seed.day(v.old_day), seed.day(v.new_day), v.reason, v.status, v.handler,
     v.note, h.at_, s.at_, coalesce(h.at_, s.at_)
   from (values
@@ -259,6 +271,7 @@ begin
 
   -- ---------- Trip requests sent between administrators ----------
   insert into public.trip_request_shares (id, allocation_id, sender_id, recipient_id, created_at, updated_at)
+  overriding system value
   select v.id, a.id, v.sender, v.recipient, seed.at(-1, '11:00:00'), seed.at(-1, '11:00:00')
   from (values (1, 8, 1, 2), (2, 7, 2, 1)) as v(id, req, sender, recipient)
   join public.trips t on t.vehicle_request_id = v.req
@@ -266,13 +279,12 @@ begin
 
   -- ---------- Maintenance ----------
   -- Statuses: in progress (3), upcoming (1, 2, 5, 6, 8, 9, 11 to 16), overdue (4), cancelled (10), completed (7).
-  -- The trigger is turned off here so the vehicle dates above stay as written.
-  alter table public.vehicle_maintenance disable trigger trg_vehicle_maintenance_sync;
 
   insert into public.vehicle_maintenance (
     id, vehicle_id, maintenance_type, description, maintenance_date, completion_date, cost,
     next_due_date, performed_by, status, notes, created_at, updated_at
   )
+  overriding system value
   select v.id, v.vehicle, v.type, v.descr, seed.day(v.d), seed.day(v.done), v.cost, seed.day(v.next_due),
     v.by_, v.status, v.notes, seed.at(least(v.d - 4, -1), '09:00:00'),
     seed.at(coalesce(v.upd, v.done, least(v.d - 4, -1)), '15:00:00')
@@ -295,13 +307,12 @@ begin
     (16, 4, 'inspection',   'Monthly safety inspection',                  33,   null, null,     null, 'NVSU Motor Pool Mechanic',       'scheduled',   null, null)
   ) as v(id, vehicle, type, descr, d, done, cost, next_due, by_, status, notes, upd);
 
-  alter table public.vehicle_maintenance enable trigger trg_vehicle_maintenance_sync;
-
   -- ---------- Post-travel reports (1-5 belong to completed trips, 6 has no trip) ----------
   insert into public.post_travel_reports (
     id, vehicle_id, trip_id, travel_date_from, travel_date_to, places_of_travel, defects_observed,
     defects_incurred, remarks, drivers, arrival_at, created_at, updated_at
   )
+  overriding system value
   select v.id, v.vehicle, t.id, seed.day(v.d1), seed.day(v.d2), v.places, v.observed, v.incurred,
     v.remarks, v.drivers,
     seed.at(coalesce(v.d2, v.d1), v.arr::time),
@@ -323,6 +334,7 @@ begin
     fuel_used, end_trip_balance, riv_no, riv_date, or_no, or_date, lubricating_oil, drivers,
     created_at, updated_at
   )
+  overriding system value
   select v.id, v.vehicle, t.id, seed.day(v.d), v.bal, v.iss, v.pur, v.used,
     round(v.bal + v.iss + v.pur - v.used, 2), v.riv, seed.day(v.riv_d), v.or_no, seed.day(v.or_d),
     v.lub, v.drivers, seed.at(v.d, '16:00:00'), seed.at(v.d, '16:00:00')
@@ -349,6 +361,7 @@ begin
     liquid_levels_condition, other_parts_condition, other_parts, remarks, supervisor_recommendation,
     created_at, updated_at
   )
+  overriding system value
   select v.id, v.vehicle,
     format('PMUV-%s-%s', extract(year from seed.day(v.dy))::int, lpad(v.id::text, 3, '0')),
     seed.day(v.dy), v.inspector, v.mileage,
